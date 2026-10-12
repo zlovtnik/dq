@@ -17,6 +17,7 @@ PostgreSQL clients or database credentials.
 - `pkg/contract`: bounded cross-language control messages.
 - `ui`: SolidJS shell and independently built processor remote.
 - [Wire contract](contracts/README.md): endpoints, messages and lifecycle.
+- [Local acceptance](tests/acceptance.md): isolated full-stack checks and measurements.
 - [Container build](Dockerfile): separate manager and worker build targets.
 - [Kubernetes base](../../cyber-stack/base/delip-queve): unpromoted workloads.
 
@@ -78,6 +79,20 @@ Runtime schema checksums must match the recorded manifest before DQ is enabled.
 Run metadata and request identities retain 90 days; referenced artifacts retain
 through open review/replay and for 90 days after closure. Uncommitted outputs
 need a safety window and reference check before removal.
+
+Octopus collects exact expired object versions hourly and prunes metadata after
+object deletion. Orphan versions wait seven days and must pass a durable
+reference check. Pending review evidence stays retained; decision-discovery
+tombstones remain after run metadata expires. Its object credentials therefore
+need version listing and deletion rights within the installation's artifact prefix.
+
+The [DQ configuration placeholders](../../cyber-stack/base/delip-queve/configmaps.yaml)
+must be replaced by approved worker manifests and configured identities before
+activation. `DQ_CONTROL_ALLOW_PLAINTEXT` defaults to false; the current Octopus
+internal HTTP endpoint needs an explicit trusted-network setting or a configured
+TLS endpoint. The schema executor image must include the canonical DQ additions
+before the new Octopus runtime checksum is promoted. Shell and remote origins,
+artifact browser access and object-store CORS also need environment configuration.
 
 Before enabled beta, verify duplicate invocation and conflicts, redelivery,
 lost acknowledgements, two managers and two workers, worker termination, lease

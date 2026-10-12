@@ -1,0 +1,26 @@
+{
+  "name": "delip-queve-ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build && bun run build:remote",
+    "build:remote": "vite build --config vite.remote.config.ts && bun scripts/package-remote.ts",
+    "test": "vitest run",
+    "preview": "vite preview --host 127.0.0.1"
+  },
+  "dependencies": {
+    "solid-js": "1.9.13"
+  },
+  "devDependencies": {
+    "@solidjs/testing-library": "0.8.10",
+    "@testing-library/jest-dom": "6.9.1",
+    "@types/bun": "1.3.14",
+    "jsdom": "25.0.1",
+    "typescript": "5.9.3",
+    "vite": "5.4.21",
+    "vite-plugin-solid": "2.11.12",
+    "vitest": "2.1.9"
+  }
+}

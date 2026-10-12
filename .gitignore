@@ -1,0 +1,9 @@
+ui/node_modules/
+ui/dist/
+ui/remotes-dist/
+ui/coverage/
+__pycache__/
+*.pyc
+.DS_Store
+*.log
+*.test
