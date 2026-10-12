@@ -3,6 +3,9 @@
 The Go manager and isolated workers use this contract with Octopus, which owns
 all durable state. All JSON fields use snake_case; times use RFC3339 UTC.
 Control records are limited to 65536 bytes and contain artifact references only.
+Checksums use sorted compact UTF-8 JSON with exact, exponent-free decimal numbers,
+no insignificant fractional zeros, and zero normalized to `0`. This remains
+stable across PostgreSQL JSONB round trips.
 
 ## Control API
 
@@ -16,6 +19,7 @@ their JSON body. Authorization and beta policy are checked by Octopus.
 - `GET /processor-versions/{processor_id}/{version}`: exact manifest.
 - `POST /runs`: admission; returns the durable run with HTTP 202.
 - `GET /runs/{run_id}`: authoritative status.
+- `GET /invocations/{idempotency_key}`: recover the originally pinned run.
 - `POST /runs/{run_id}/cancel`: cancellation and fencing.
 - `POST /runs/{run_id}/replay`: explicit audited new run.
 - `POST /receipts`: persist valid or quarantined broker receipt.
@@ -24,6 +28,8 @@ their JSON body. Authorization and beta policy are checked by Octopus.
 - `POST /runs/{run_id}/attempts/reserve`: atomic worker and slot reservation.
 - `POST /attempts/{attempt_id}/accepted`: record dispatch acknowledgement.
 - `POST /attempts/{attempt_id}/renew`: renew an exact fenced lease.
+- `GET /artifacts/{artifact_id}`: authorized artifact metadata.
+- `POST /artifacts/{artifact_id}/access`: audited short-lived access.
 
 ## Shared data
 
@@ -37,6 +43,12 @@ inputs[], outputs[], resources, policy_version, ui_remote?. Resources contain
 concurrency, timeout_seconds, max_input_bytes, max_output_bytes. Bindings contain
 name, direction, transport, topic?, bucket?, allowed_prefix?, schema_id,
 required, max_items, max_bytes, semantics.
+
+The v1 coordinator accepts bounded object schemas with `type`, `properties`,
+`required`, boolean `additionalProperties`, `enum`, `const`, numeric bounds,
+string length/pattern bounds, `items`, array length bounds and descriptive
+metadata. Unsupported keywords, external references and excessive nesting fail
+registration. The manager and worker validate parameters against the pinned schema.
 
 `AdmitRequest`: installation_id, namespace, processor_id, processor_version?,
 operation, parameters, idempotency_key, deadline_at?, traceparent?, tracestate?.
@@ -74,6 +86,9 @@ error_code?, error_class?.
 `reconcile_decision`. Parameters: authorized_scope, snapshot_revision?,
 policy_version, max_candidates (1..1000), candidate_id?. Scope is `*` or one
 authorized location; scoped pairs require both endpoints in that location.
+When building a snapshot, Octopus must include only in-scope devices and pairs.
+Prepare compares `authorized_scope` values, but devices have no location field
+that lets it validate whether pair endpoints belong to that scope.
 
 Snapshot schema `atheros.dedup.snapshot.v1`: installation_id, namespace,
 authorized_scope, operation, source_revision_digest, policy_version, pairs[],

@@ -1,4 +1,4 @@
-module github.com/zlovtnik/ssl-proxy/services/delip-queve
+module github.com/zlovtnik/ssl-proxy/services/dq
 
 go 1.26.0
 

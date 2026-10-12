@@ -12,9 +12,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/contract"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/rpc"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/sdk"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/contract"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/rpc"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/sdk"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/telemetry"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -67,6 +71,25 @@ type reports struct {
 }
 
 type boundedReporter struct{}
+
+type progressProcessor struct {
+	base *blocking
+	fail bool
+	late func(context.Context, int64, []byte) error
+}
+
+func (p *progressProcessor) Run(ctx context.Context, req contract.RunRequest, supplied sdk.RunContext) (contract.OutputManifest, error) {
+	p.late = supplied.Progress
+	for _, sequence := range []int64{10, 20} {
+		if err := supplied.Progress(ctx, sequence, []byte(`{"count":1}`)); err != nil {
+			return contract.OutputManifest{}, err
+		}
+	}
+	if p.fail {
+		return contract.OutputManifest{}, sdk.Permanent("invalid_source")
+	}
+	return p.base.Run(ctx, req, supplied)
+}
 
 func (boundedReporter) Report(ctx context.Context, _ contract.Envelope) error {
 	if ctx.Err() != nil {
@@ -156,6 +179,11 @@ func TestImmutableDuplicateAndAtomicSlot(t *testing.T) {
 		t.Fatal("active slot advertised")
 	}
 	conflicting := req
+	conflicting.Traceparent = "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"
+	conflicting.Tracestate = "test=retry"
+	if _, err := w.Run(context.Background(), conflicting); err != nil {
+		t.Fatalf("retry transport context changed work identity: %v", err)
+	}
 	conflicting.Parameters = json.RawMessage(`{"x":2}`)
 	if _, err := w.Run(context.Background(), conflicting); status.Code(err) != codes.AlreadyExists {
 		t.Fatalf("conflict %v", err)
@@ -262,6 +290,86 @@ func TestDependencyFailureReleasesCredit(t *testing.T) {
 	if r.last().ErrorCode != "dependency_unavailable" {
 		t.Fatal("unsanitized failure")
 	}
+}
+
+func TestEveryWorkerReportHasIncreasingSequenceIncludingTerminal(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(map[bool]string{false: "output", true: "failure"}[fail], func(t *testing.T) {
+			w, base, reporter := newFixture(t, 8)
+			close(base.release)
+			processor := &progressProcessor{base: base, fail: fail}
+			w.processor = processor
+			req := request(w)
+			if _, err := w.Run(context.Background(), req); err != nil {
+				t.Fatal(err)
+			}
+			want := "output_ready"
+			if fail {
+				want = "failed"
+			}
+			waitDone(t, w, req, want)
+			reporter.mu.Lock()
+			events := append([]contract.Envelope(nil), reporter.events...)
+			reporter.mu.Unlock()
+			if len(events) != 4 {
+				t.Fatalf("expected started, two progress, terminal; got %+v", events)
+			}
+			previous := int64(0)
+			for _, event := range events {
+				if event.Sequence <= previous {
+					t.Fatalf("non-increasing report sequence: %+v", events)
+				}
+				previous = event.Sequence
+				data, err := contract.EncodeEnvelope(event)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var encoded map[string]json.RawMessage
+				if json.Unmarshal(data, &encoded) != nil || encoded["sequence"] == nil {
+					t.Fatalf("missing wire report sequence: %s", data)
+				}
+			}
+			if err := processor.late(context.Background(), 30, []byte(`{}`)); err == nil {
+				t.Fatal("late progress could follow terminal report")
+			}
+		})
+	}
+}
+
+func TestWorkerExecutionContinuesTransportTraceAfterAcknowledgement(t *testing.T) {
+	exporter := tracetest.NewInMemoryExporter()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter), sdktrace.WithSampler(sdktrace.AlwaysSample()))
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() { otel.SetTracerProvider(previous); _ = provider.Shutdown(context.Background()) })
+	w, processor, _ := newFixture(t, 8)
+	ctx, cancel := context.WithCancel(context.Background())
+	ctx = telemetry.Extract(ctx, "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01", "test=worker")
+	ctx, transport := telemetry.Start(ctx, "rpc.server")
+	transportID := transport.SpanContext().SpanID()
+	req := request(w)
+	req.Traceparent = "00-0123456789abcdef0123456789abcdef-fedcba9876543210-01"
+	if _, err := w.Run(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	transport.End()
+	cancel()
+	<-processor.started
+	close(processor.release)
+	waitDone(t, w, req, "output_ready")
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		for _, span := range exporter.GetSpans() {
+			if span.Name == "worker.run" {
+				if span.Parent.SpanID() != transportID || span.SpanContext.TraceID().String() != "0123456789abcdef0123456789abcdef" {
+					t.Fatalf("worker execution lost transport parent: %+v", span)
+				}
+				return
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("worker execution span was not exported")
 }
 func TestPersistentGRPCLifecycleLostAcknowledgement(t *testing.T) {
 	w, p, _ := newFixture(t, 8)

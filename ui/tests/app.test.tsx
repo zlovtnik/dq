@@ -119,4 +119,45 @@ describe("stable operational shell", () => {
       ),
     );
   });
+
+  it("retains the latest run revision through stale responses and status outages", async () => {
+    setAccessToken("secret");
+    window.history.replaceState({}, "", "/dq/runs/run-1");
+    vi.spyOn(api, "manifest").mockResolvedValue(manifest);
+    const running: Run = {
+      run_id: "run-1",
+      installation_id: "test",
+      namespace: "audit",
+      processor_id: manifest.processor_id,
+      processor_version: manifest.version,
+      operation: "execute",
+      implementation_digest: manifest.implementation_digest,
+      policy_version: manifest.policy_version,
+      status: "running",
+      execution_mode: "enabled",
+      projection_applied: false,
+      state_revision: 3,
+      input_refs: [],
+      output_refs: [],
+      parameters: {},
+      created_at: "2026-01-01T00:00:00Z",
+      deadline_at: "2026-01-01T00:10:00Z",
+    };
+    const status = vi.spyOn(api, "run")
+      .mockResolvedValueOnce(running)
+      .mockResolvedValueOnce({ ...running, status: "queued", state_revision: 2 })
+      .mockRejectedValueOnce(new Error("Status unavailable"))
+      .mockResolvedValue({ ...running, status: "succeeded", state_revision: 4, projection_applied: true });
+    const view = render(() => <App />);
+    await waitFor(() => expect(view.getByText("running")).toBeInTheDocument());
+    fireEvent.click(view.getByRole("button", { name: "Refresh status" }));
+    await waitFor(() => expect(status).toHaveBeenCalledTimes(2));
+    expect(view.getByText("running")).toBeInTheDocument();
+    expect(view.queryByText("queued")).toBeNull();
+    fireEvent.click(view.getByRole("button", { name: "Refresh status" }));
+    await waitFor(() => expect(view.getByRole("alert")).toHaveTextContent("Status unavailable"));
+    expect(view.getByText("running")).toBeInTheDocument();
+    fireEvent.click(view.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(view.getByText(/Run completed/)).toHaveTextContent("Projection applied."));
+  });
 });

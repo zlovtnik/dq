@@ -11,13 +11,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/internal/broker"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/internal/config"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/internal/control"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/internal/httpapi"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/internal/manager"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/contract"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/telemetry"
+	"github.com/zlovtnik/ssl-proxy/services/dq/internal/broker"
+	"github.com/zlovtnik/ssl-proxy/services/dq/internal/config"
+	"github.com/zlovtnik/ssl-proxy/services/dq/internal/control"
+	"github.com/zlovtnik/ssl-proxy/services/dq/internal/httpapi"
+	"github.com/zlovtnik/ssl-proxy/services/dq/internal/manager"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/contract"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/telemetry"
 )
 
 func main() {
@@ -33,7 +33,15 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	shutdownTrace,err:=telemetry.Init(context.Background(),"dq-manager");if err!=nil{return errors.New("tracing configuration unavailable")};defer func(){ctx,stop:=context.WithTimeout(context.Background(),5*time.Second);defer stop();_ = shutdownTrace(ctx)}()
+	shutdownTrace, err := telemetry.Init(context.Background(), "dq-manager")
+	if err != nil {
+		return errors.New("tracing configuration unavailable")
+	}
+	defer func() {
+		ctx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stop()
+		_ = shutdownTrace(ctx)
+	}()
 	workers, closeConnections, err := manager.Connect(cfg)
 	if err != nil {
 		return err

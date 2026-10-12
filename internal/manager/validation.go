@@ -8,13 +8,13 @@ import (
 	"strings"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/contract"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/contract"
 )
 
 const SchemaDialect = "https://json-schema.org/draft/2020-12/schema"
 
 // CanonicalJSON is the wire canonical form: recursively sorted keys, no
-// whitespace, preserved JSON numbers, and no HTML escaping. Duplicate names are
+// whitespace, exact plain decimal numbers, and no HTML escaping. Duplicate names are
 // rejected rather than allowing different validators to interpret them.
 func CanonicalJSON(data []byte) ([]byte, error) {
 	return contract.CanonicalJSON(data)

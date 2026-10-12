@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/contract"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/contract"
 )
 
 func fixtureManifest(t testing.TB) contract.Manifest {

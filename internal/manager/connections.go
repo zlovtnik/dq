@@ -7,9 +7,9 @@ import (
 	"errors"
 	"os"
 
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/internal/config"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/contract"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/rpc"
+	"github.com/zlovtnik/ssl-proxy/services/dq/internal/config"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/contract"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/rpc"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -58,7 +58,7 @@ func Connect(c config.Config) ([]*Worker, func(), error) {
 		}
 	}
 	for _, approved := range c.Workers {
-		connection, err := grpc.NewClient("dns:///"+approved.Address, grpc.WithTransportCredentials(transport), grpc.WithPerRPCCredentials(serviceCredentials{token: c.WorkerToken, insecure: c.InsecureDevelopment}),grpc.WithStatsHandler(otelgrpc.NewClientHandler()), grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(contract.MaxRecordBytes+1024), grpc.MaxCallSendMsgSize(contract.MaxRecordBytes+1024)))
+		connection, err := grpc.NewClient("dns:///"+approved.Address, grpc.WithTransportCredentials(transport), grpc.WithPerRPCCredentials(serviceCredentials{token: c.WorkerToken, insecure: c.InsecureDevelopment}), grpc.WithStatsHandler(otelgrpc.NewClientHandler()), grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(contract.MaxRecordBytes+1024), grpc.MaxCallSendMsgSize(contract.MaxRecordBytes+1024)))
 		if err != nil {
 			closeAll()
 			return nil, nil, errors.New("invalid approved worker connection")

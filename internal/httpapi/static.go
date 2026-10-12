@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/internal/control"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/internal/manager"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/contract"
+	"github.com/zlovtnik/ssl-proxy/services/dq/internal/control"
+	"github.com/zlovtnik/ssl-proxy/services/dq/internal/manager"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/contract"
 )
 
 func Shell(directory, remoteOrigin string) http.Handler {

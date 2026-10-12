@@ -3,7 +3,7 @@ package dedup
 import (
 	"context"
 	"fmt"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/contract"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/contract"
 	"math"
 	"strings"
 	"testing"

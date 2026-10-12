@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"github.com/santhosh-tekuri/jsonschema/v6"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/contract"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/contract"
 	"strings"
 	"testing"
 )

@@ -14,12 +14,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/internal/config"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/internal/control"
-	workerhost "github.com/zlovtnik/ssl-proxy/services/delip-queve/internal/worker"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/contract"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/rpc"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/sdk"
+	"github.com/zlovtnik/ssl-proxy/services/dq/internal/config"
+	"github.com/zlovtnik/ssl-proxy/services/dq/internal/control"
+	workerhost "github.com/zlovtnik/ssl-proxy/services/dq/internal/worker"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/contract"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/rpc"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/sdk"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
@@ -235,5 +235,25 @@ func TestManagerRestartPollRecoversReceivedWorkWithoutBrokerRedelivery(t *testin
 	}
 	if processor.executions.Load() != 1 {
 		t.Fatal("durably received work stranded after manager restart")
+	}
+}
+
+func TestCoordinatorBatchBeyondLocalLimitStillDispatches(t *testing.T) {
+	ledger := fixtureLedger(t)
+	ledger.received["run-1"], ledger.received["run-2"] = true, true
+	w, processor, _ := grpcFixtureWorker(t, ledger.manifest, "bounded")
+	scope := contract.Scope{InstallationID: ledger.manifest.InstallationID, Namespace: ledger.manifest.Namespace}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := New(ledger, scope, []*Worker{w}, true, "", 1, time.Second)
+	m.Tick(ctx)
+	deadline := time.Now().Add(time.Second)
+	for processor.executions.Load() < 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	ledger.mu.Lock()
+	defer ledger.mu.Unlock()
+	if processor.executions.Load() != 1 || ledger.reservations != 1 || m.Metrics.PollErrors.Load() != 0 {
+		t.Fatalf("larger backlog stalled: executions=%d reservations=%d polls=%d", processor.executions.Load(), ledger.reservations, m.Metrics.PollErrors.Load())
 	}
 }

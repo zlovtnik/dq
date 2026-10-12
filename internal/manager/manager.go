@@ -10,10 +10,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/internal/config"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/internal/control"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/contract"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/telemetry"
+	"github.com/zlovtnik/ssl-proxy/services/dq/internal/config"
+	"github.com/zlovtnik/ssl-proxy/services/dq/internal/control"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/contract"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/telemetry"
 )
 
 type Lifecycle interface {
@@ -180,8 +180,7 @@ func (m *Manager) Tick(ctx context.Context) {
 		return
 	}
 	if len(pending.Items) > m.Limit {
-		m.Metrics.PollErrors.Add(1)
-		return
+		pending.Items = pending.Items[:m.Limit]
 	}
 	credits := make(chan struct{}, m.Limit)
 	var wg sync.WaitGroup
@@ -340,7 +339,8 @@ func (m *Manager) dispatch(ctx context.Context, item contract.Dispatch) error {
 	started := time.Now()
 	callCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	response, err := selected.Client.Run(callCtx, contract.RunRequest{Scope: m.Scope, RunID: r.RunID, AttemptID: a.AttemptID, Fence: a.Fence, WorkerInstanceID: a.WorkerInstanceID, WorkerSlot: a.WorkerSlot, ProcessorID: r.ProcessorID, ProcessorVersion: r.ProcessorVersion, ImplementationDigest: r.ImplementationDigest, Operation: r.Operation, Parameters: r.Parameters, InputRefs: r.InputRefs, PolicyVersion: r.PolicyVersion, SourceRevisionDigest: r.SourceRevisionDigest, DeadlineAt: r.DeadlineAt, LeaseExpiresAt: a.LeaseExpiresAt, Traceparent: r.Traceparent, Tracestate: r.Tracestate})
+	traceparent, tracestate := telemetry.Fields(ctx)
+	response, err := selected.Client.Run(callCtx, contract.RunRequest{Scope: m.Scope, RunID: r.RunID, AttemptID: a.AttemptID, Fence: a.Fence, WorkerInstanceID: a.WorkerInstanceID, WorkerSlot: a.WorkerSlot, ProcessorID: r.ProcessorID, ProcessorVersion: r.ProcessorVersion, ImplementationDigest: r.ImplementationDigest, Operation: r.Operation, Parameters: r.Parameters, InputRefs: r.InputRefs, PolicyVersion: r.PolicyVersion, SourceRevisionDigest: r.SourceRevisionDigest, DeadlineAt: r.DeadlineAt, LeaseExpiresAt: a.LeaseExpiresAt, Traceparent: traceparent, Tracestate: tracestate})
 	if err != nil {
 		return errors.New("worker acknowledgement unavailable")
 	}
@@ -406,7 +406,10 @@ func (m *Manager) startMonitor(ctx context.Context, r contract.Run, a contract.A
 			healthCtx, cancelHealth := context.WithTimeout(ctx, 3*time.Second)
 			health, err := w.Client.Health(healthCtx)
 			cancelHealth()
-			if err != nil || health.WorkerInstanceID != a.WorkerInstanceID || !validHealth(w.Approved, health) {
+			if err != nil {
+				continue
+			}
+			if health.WorkerInstanceID != a.WorkerInstanceID || !validHealth(w.Approved, health) {
 				return
 			}
 			if time.Now().After(r.DeadlineAt) {
@@ -436,13 +439,20 @@ func (m *Manager) CancelWorker(ctx context.Context, run contract.Run) {
 	}
 	a := run.CurrentAttempt
 	m.mu.RLock()
-	defer m.mu.RUnlock()
+	var client Lifecycle
 	for _, w := range m.workers {
 		if w.Health.WorkerInstanceID == a.WorkerInstanceID {
-			_, _ = w.Client.Cancel(ctx, contract.CancelRequest{Scope: contract.Scope{InstallationID: run.InstallationID, Namespace: run.Namespace}, RunID: run.RunID, AttemptID: a.AttemptID, Fence: a.Fence})
-			return
+			client = w.Client
+			break
 		}
 	}
+	m.mu.RUnlock()
+	if client == nil {
+		return
+	}
+	callCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	_, _ = client.Cancel(callCtx, contract.CancelRequest{Scope: contract.Scope{InstallationID: run.InstallationID, Namespace: run.Namespace}, RunID: run.RunID, AttemptID: a.AttemptID, Fence: a.Fence})
 }
 
 func itoa(v int) string { b, _ := json.Marshal(v); return string(b) }

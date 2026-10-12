@@ -48,3 +48,34 @@ func TestRejectRedirectAndUnboundedResponse(t *testing.T) {
 		t.Fatal("unbounded response accepted")
 	}
 }
+
+func TestServiceContextDropsDelegatedIdentity(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for _, header := range []string{"X-DQ-Actor", "X-DQ-Roles", "X-DQ-Scopes"} {
+			if r.Header.Get(header) != "" {
+				t.Errorf("service request retained delegated %s", header)
+			}
+		}
+		if r.Header.Get("Authorization") != "Bearer service-secret" {
+			t.Error("missing service authentication")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	ctx := WithActor(context.Background(), Actor{ID: "user", Roles: []string{"viewer"}, Scopes: []string{"floor-a"}})
+	if err := New(server.URL, "service-secret").Do(ServiceContext(ctx), http.MethodGet, "/dispatches", nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEscapePathKeepsIDsWithinOneRouteSegment(t *testing.T) {
+	got, err := escapePath("/runs/run-id%20one/cancel")
+	if err != nil || got != "/runs/run-id%20one/cancel" {
+		t.Fatalf("escaped path = %q, %v", got, err)
+	}
+	for _, path := range []string{"/runs/a%2Fb", "/runs/../cancel", "/runs/a?scope=other", "//runs/id"} {
+		if _, err := escapePath(path); err == nil {
+			t.Errorf("unsafe path accepted: %q", path)
+		}
+	}
+}

@@ -86,7 +86,11 @@ func Load() (Config, error) {
 		return c, errors.New("invalid approved workers configuration")
 	}
 	if b := os.Getenv("DQ_BROKERS"); b != "" {
-		c.Brokers = strings.Split(b, ",")
+		for _, broker := range strings.Split(b, ",") {
+			if broker = strings.TrimSpace(broker); broker != "" {
+				c.Brokers = append(c.Brokers, broker)
+			}
+		}
 	}
 	return c, c.Validate()
 }
@@ -108,7 +112,7 @@ func (c Config) Validate() error {
 			return errors.New("invalid scoped identity")
 		}
 		for _, r := range i.Roles {
-			if r != "viewer" && r != "operator" && r != "admin" && r!="processor_owner" {
+			if r != "viewer" && r != "operator" && r != "admin" && r != "processor_owner" {
 				return errors.New("unknown identity role")
 			}
 		}

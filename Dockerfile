@@ -1,16 +1,16 @@
 # Build from the repository root; use target manager or worker.
-FROM oven/bun:1.3.14 AS ui
+FROM oven/bun:1.4.0 AS ui
 WORKDIR /src
-COPY services/delip-queve/ui/package.json services/delip-queve/ui/bun.lock ./
+COPY services/dq/ui/package.json services/dq/ui/bun.lock ./
 RUN bun install --frozen-lockfile
-COPY services/delip-queve/ui ./
+COPY services/dq/ui ./
 RUN bun run build
 
 FROM golang:1.27-bookworm AS go
 WORKDIR /src
-COPY services/delip-queve/go.mod services/delip-queve/go.sum ./
+COPY services/dq/go.mod services/dq/go.sum ./
 RUN go mod download
-COPY services/delip-queve ./
+COPY services/dq ./
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/dq-manager ./cmd/manager
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/dq-worker ./cmd/worker
 

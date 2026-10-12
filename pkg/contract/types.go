@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -322,6 +323,19 @@ func EncodeEnvelope(envelope Envelope) ([]byte, error) {
 func (ref ArtifactRef) Validate() error {
 	if !ValidSegment(ref.ArtifactID) || !ValidSegment(ref.InstallationID) || !ValidSegment(ref.Namespace) || ref.VersionID == "" || ref.VersionID == "null" || ref.ETag == "" || !ValidSHA256(ref.SHA256) || ref.SizeBytes < 0 || ref.SchemaID == "" || ref.MediaType == "" {
 		return errors.New("invalid versioned artifact reference")
+	}
+	u, err := url.Parse(ref.URI)
+	if err != nil || u.Scheme != "s3" || u.Opaque != "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Host == "" || u.RawPath != "" || strings.Contains(u.Path, "%") {
+		return errors.New("invalid artifact URI")
+	}
+	key := strings.TrimPrefix(u.Path, "/")
+	if key == "" {
+		return errors.New("invalid artifact URI")
+	}
+	for _, segment := range strings.Split(key, "/") {
+		if !ValidSegment(segment) {
+			return errors.New("invalid artifact URI")
+		}
 	}
 	return nil
 }

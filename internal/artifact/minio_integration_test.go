@@ -9,7 +9,7 @@ import (
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/minio/minio-go/v7/pkg/encrypt"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/contract"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/contract"
 	"io"
 	"os"
 	"os/exec"
@@ -28,7 +28,7 @@ func TestMinIOExactVersionEncryptedStreaming(t *testing.T) {
 	if image == "" {
 		image = "minio/minio:RELEASE.2025-09-07T16-13-09Z"
 	}
-	args := []string{"run", "-d", "--rm", "-p", "127.0.0.1::9000", "-e", "MINIO_ROOT_USER=dqtestuser", "-e", "MINIO_ROOT_PASSWORD=dqtestpassword", "-e", "MINIO_KMS_SECRET_KEY=dq-test:000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", image, "server", "/data"}
+	args := []string{"run", "-d", "--rm", "-p", "127.0.0.1::9000", "-e", "MINIO_ROOT_USER=dqtestuser", "-e", "MINIO_ROOT_PASSWORD=dqtestpassword", "-e", "MINIO_KMS_SECRET_KEY=dq-test:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=", image, "server", "/data"}
 	output, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("mandatory MinIO test container: %v %s", err, output)

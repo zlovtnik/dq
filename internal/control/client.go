@@ -10,7 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/telemetry"
+
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/telemetry"
 )
 
 const MaxRecordBytes = 65536
@@ -47,7 +48,8 @@ func New(baseURL, token string) *Client {
 }
 
 func (c *Client) Do(ctx context.Context, method, path string, query url.Values, body, out any) error {
-	ctx,span:=telemetry.Start(ctx,"dq.control");defer span.End()
+	ctx, span := telemetry.Start(ctx, "dq.control")
+	defer span.End()
 	var data []byte
 	var err error
 	if body != nil {
@@ -55,6 +57,10 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 		if err != nil || len(data) > MaxRecordBytes {
 			return errors.New("control record exceeds limit")
 		}
+	}
+	path, err = escapePath(path)
+	if err != nil {
+		return errors.New("invalid coordinator path")
 	}
 	endpoint := c.BaseURL + path
 	if len(query) > 0 {
@@ -66,7 +72,13 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 	}
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 	req.Header.Set("Content-Type", "application/json")
-	tp,ts:=telemetry.Fields(ctx);if tp!=""{req.Header.Set("traceparent",tp)};if ts!=""{req.Header.Set("tracestate",ts)}
+	tp, ts := telemetry.Fields(ctx)
+	if tp != "" {
+		req.Header.Set("traceparent", tp)
+	}
+	if ts != "" {
+		req.Header.Set("tracestate", ts)
+	}
 	if a, ok := ctx.Value(actorKey{}).(Actor); ok && a.ID != "" {
 		req.Header.Set("X-DQ-Actor", a.ID)
 		req.Header.Set("X-DQ-Scopes", strings.Join(a.Scopes, ","))
@@ -93,6 +105,21 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 		return ErrResponse
 	}
 	return nil
+}
+
+func escapePath(path string) (string, error) {
+	if !strings.HasPrefix(path, "/") || strings.ContainsAny(path, "?#") {
+		return "", errors.New("invalid path")
+	}
+	parts := strings.Split(path[1:], "/")
+	for i, part := range parts {
+		decoded, err := url.PathUnescape(part)
+		if err != nil || decoded == "" || decoded == "." || decoded == ".." || strings.ContainsAny(decoded, "/\\?#") {
+			return "", errors.New("invalid path segment")
+		}
+		parts[i] = url.PathEscape(decoded)
+	}
+	return "/" + strings.Join(parts, "/"), nil
 }
 
 func Query(installation, namespace string) url.Values {

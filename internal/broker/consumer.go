@@ -18,11 +18,11 @@ import (
 
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/sasl/scram"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/internal/config"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/internal/control"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/internal/manager"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/contract"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/telemetry"
+	"github.com/zlovtnik/ssl-proxy/services/dq/internal/config"
+	"github.com/zlovtnik/ssl-proxy/services/dq/internal/control"
+	"github.com/zlovtnik/ssl-proxy/services/dq/internal/manager"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/contract"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/telemetry"
 )
 
 const CommandTopic = "dq.commands.v1"

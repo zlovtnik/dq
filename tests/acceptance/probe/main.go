@@ -18,8 +18,8 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/minio/minio-go/v7/pkg/sse"
 	"github.com/twmb/franz-go/pkg/kgo"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/contract"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/rpc"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/contract"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/rpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
@@ -62,6 +62,7 @@ func run(ctx context.Context, action string) (any, error) {
 		if err != nil {
 			return nil, err
 		}
+		started := time.Now()
 		object, err := client.GetObject(ctx, u.Host, strings.TrimPrefix(u.Path, "/"), minio.GetObjectOptions{VersionID: ref.VersionID})
 		if err != nil {
 			return nil, err
@@ -79,7 +80,13 @@ func run(ctx context.Context, action string) (any, error) {
 		if stat.VersionID != ref.VersionID || stat.ETag != ref.ETag {
 			return nil, errors.New("artifact exact version mismatch")
 		}
-		return map[string]any{"size_bytes": count, "sha256_verified": true, "exact_version_verified": true}, nil
+		if stat.Metadata.Get("X-Amz-Server-Side-Encryption") != "AES256" {
+			return nil, errors.New("artifact server-side encryption missing")
+		}
+		elapsed := time.Since(started)
+		return map[string]any{"size_bytes": count, "sha256_verified": true, "exact_version_verified": true,
+			"server_side_encryption_verified": true, "elapsed_ms": float64(elapsed.Microseconds()) / 1000,
+			"throughput_mib_per_second": float64(count) / (1024 * 1024) / elapsed.Seconds()}, nil
 	case "health", "run", "cancel":
 		connection, err := grpc.NewClient(os.Getenv("DQ_PROBE_WORKER"), grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {

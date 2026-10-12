@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/internal/config"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/internal/control"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/telemetry"
+	"github.com/zlovtnik/ssl-proxy/services/dq/internal/config"
+	"github.com/zlovtnik/ssl-proxy/services/dq/internal/control"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/telemetry"
 )
 
 type principalKey struct{}
@@ -51,7 +51,10 @@ func (p Principal) Allows(installation, namespace, scope string) bool {
 
 func Auth(identities []config.Identity, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx:=telemetry.Extract(r.Context(),r.Header.Get("traceparent"),r.Header.Get("tracestate"));ctx,span:=telemetry.Start(ctx,"dq.http");defer span.End();r=r.WithContext(ctx)
+		ctx := telemetry.Extract(r.Context(), r.Header.Get("traceparent"), r.Header.Get("tracestate"))
+		ctx, span := telemetry.Start(ctx, "dq.http")
+		defer span.End()
+		r = r.WithContext(ctx)
 		header := r.Header.Get("Authorization")
 		if !strings.HasPrefix(header, "Bearer ") || len(header) > 4096 {
 			writeError(w, http.StatusUnauthorized, "authentication_required")

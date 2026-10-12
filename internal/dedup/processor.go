@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/contract"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/sdk"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/contract"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/sdk"
 )
 
 const ProcessorID = "atheros.dedup"

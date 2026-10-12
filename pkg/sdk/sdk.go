@@ -4,7 +4,7 @@ package sdk
 
 import (
 	"context"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/contract"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/contract"
 	"io"
 )
 

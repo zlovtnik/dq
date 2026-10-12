@@ -41,6 +41,6 @@ func Fields(ctx context.Context) (string, string) {
 	return carrier["traceparent"], carrier["tracestate"]
 }
 func Start(ctx context.Context, name string) (context.Context, trace.Span) {
-	return otel.Tracer("delip-queve").Start(ctx, name)
+	return otel.Tracer("dq").Start(ctx, name)
 }
 func Fail(span trace.Span) { span.SetStatus(codes.Error, "operation_failed") }

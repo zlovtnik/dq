@@ -116,7 +116,7 @@ const file_proto_lifecycle_proto_rawDesc = "" +
 	"\x04Init\x12\x0f.dq.v1.Document\x1a\x0f.dq.v1.Document\x12'\n" +
 	"\x03Run\x12\x0f.dq.v1.Document\x1a\x0f.dq.v1.Document\x12*\n" +
 	"\x06Cancel\x12\x0f.dq.v1.Document\x1a\x0f.dq.v1.Document\x12'\n" +
-	"\x06Health\x12\f.dq.v1.Empty\x1a\x0f.dq.v1.DocumentB?Z=github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/rpc/pbb\x06proto3"
+	"\x06Health\x12\f.dq.v1.Empty\x1a\x0f.dq.v1.DocumentB6Z4github.com/zlovtnik/ssl-proxy/services/dq/pkg/rpc/pbb\x06proto3"
 
 var (
 	file_proto_lifecycle_proto_rawDescOnce sync.Once

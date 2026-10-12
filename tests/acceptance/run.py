@@ -28,7 +28,7 @@ from testcontainers.core.container import DockerContainer
 from testcontainers.core.wait_strategies import ExecWaitStrategy
 
 ROOT = Path(__file__).resolve().parents[4]
-SERVICE = ROOT / "services/delip-queve"
+SERVICE = ROOT / "services/dq"
 SCOPE = {"installation_id": "dq-local-test", "namespace": "beta"}
 POLICY = "acceptance-v1"
 QUERY = "?" + urllib.parse.urlencode(SCOPE)
@@ -45,6 +45,16 @@ def digest(value):
     return hashlib.sha256(canonical(value)).hexdigest()
 
 
+def local_environment(values):
+    # A developer's shell can contain production endpoints or secret-file
+    # overrides. Only this harness supplies platform settings to its processes.
+    prefixes = ("POSTGRES_", "OCTOPUS_", "DQ_", "MINIO_", "SYNC_", "OTEL_", "COORDINATOR_")
+    environment = {key: value for key, value in os.environ.items() if not key.startswith(prefixes)}
+    environment.update(values)
+    environment["OTEL_SDK_DISABLED"] = "true"
+    return environment
+
+
 def port():
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -56,6 +66,10 @@ def check(condition, description):
         raise AssertionError(description)
 
 
+class TransientHTTPResponse(Exception):
+    pass
+
+
 def eventually(fn, description, timeout=45):
     deadline = time.monotonic() + timeout
     last = None
@@ -64,7 +78,7 @@ def eventually(fn, description, timeout=45):
             last = fn()
             if last:
                 return last
-        except (urllib.error.URLError, ConnectionError, TimeoutError):
+        except (urllib.error.URLError, ConnectionError, TimeoutError, TransientHTTPResponse):
             pass
         time.sleep(0.1)
     raise AssertionError(f"timed out: {description}; last={last!r}")
@@ -109,7 +123,7 @@ class Stack:
 
     def launch(self, name, argv, env):
         log = (self.directory / f"{name}.log").open("w")
-        process = subprocess.Popen(argv, cwd=ROOT, env=dict(os.environ, **env),
+        process = subprocess.Popen(argv, cwd=ROOT, env=local_environment(env),
                                    stdout=log, stderr=subprocess.STDOUT)
         self.logs.append(log)
         self.processes.append(process)
@@ -127,10 +141,10 @@ class Stack:
         return json.loads(self.sql(query))
 
     def probe(self, action, value=None, address=None, token=None):
-        environment = dict(os.environ, MINIO_ENDPOINT=self.minio_address,
+        environment = local_environment(dict(MINIO_ENDPOINT=self.minio_address,
                            MINIO_ACCESS_KEY=self.storage_access, MINIO_SECRET_KEY=self.storage_secret,
                            DQ_BROKERS=self.broker_address, DQ_WORKER_TOKEN=token or self.worker_token,
-                           DQ_PROBE_WORKER=address or self.worker_addresses[0])
+                           DQ_PROBE_WORKER=address or self.worker_addresses[0]))
         output = self.execute([str(self.directory / "probe"), action], env=environment,
                               stdin=json.dumps(value) if value is not None else None)
         return json.loads(output)
@@ -147,6 +161,9 @@ class Stack:
         try:
             response = urllib.request.urlopen(request, timeout=15)
         except urllib.error.HTTPError as error:
+            if error.code >= 500:
+                error.close()
+                raise TransientHTTPResponse(f"HTTP {error.code} from {path}")
             response = error
         with response:
             raw = response.read()
@@ -374,8 +391,10 @@ class Stack:
         self.public("/runs", request, token=self.viewer_token, expected=403)
         forbidden = dict(request, installation_id="other-installation")
         self.public("/runs", forbidden, expected=403)
+        admission_started = time.perf_counter()
         for index in range(self.args.samples):
             self.admit(f"latency-{index}")
+        self.sample_admission_seconds = time.perf_counter() - admission_started
         shadow = self.terminal(first["run_id"])
         check(shadow["execution_mode"] == "shadow" and not shadow["projection_applied"], "shadow success does not apply")
         check(self.sql("SELECT count(*) FROM atheros_search.merge_candidates c JOIN atheros_search.devices d ON d.mac=c.mac_a WHERE d.location_id='north'") == "0",
@@ -393,6 +412,19 @@ class Stack:
         self.scenarios.extend(["two_managers_two_workers", "duplicate_invocation_and_conflict", "scope_and_viewer_authorization",
                                "shadow_comparison_without_projection", "enabled_projection_application", "large_exact_version_artifact_integrity"])
         self.streaming = bytes_verified
+        artifact = enabled["output_refs"][0]
+        access = self.public("/artifacts/" + artifact["artifact_id"] + "/access", SCOPE)
+        self.public("/artifacts/" + artifact["artifact_id"] + "/access", SCOPE,
+                    token=self.viewer_token, expected=403)
+        signed = urllib.parse.urlparse(access["url"])
+        signed_query = urllib.parse.parse_qs(signed.query)
+        check(signed_query.get("versionId") == [artifact["version_id"]], "signed artifact access pins exact version")
+        check(int(signed_query["X-Amz-Expires"][0]) <= 60, "signed artifact access expires within one minute")
+        with urllib.request.urlopen(access["url"], timeout=10) as response:
+            body = response.read(artifact["size_bytes"] + 1)
+        check(len(body) == artifact["size_bytes"] and hashlib.sha256(body).hexdigest() == artifact["sha256"],
+              "authorized signed URL returns exact artifact bytes")
+        self.scenarios.append("scoped_short_lived_exact_version_artifact_access")
         self.recovery_scenarios()
 
     def prepared(self, key):
@@ -475,6 +507,25 @@ class Stack:
         _, run = self.admit("surviving-manager", internal=True)
         self.terminal(run["run_id"])
         self.scenarios.append("manager_termination_surviving_replica")
+        self.broker_failure()
+
+    def broker_failure(self):
+        # This pause affects only the container created by this harness.
+        container = self.redpanda.get_wrapped_container()
+        container.pause()
+        try:
+            _, run = self.admit("broker-outage", internal=True)
+            eventually(lambda: self.sql("SELECT count(*) FROM octopus_core.dq_outbox "
+                                        f"WHERE payload->>'run_id'='{run['run_id']}' AND status<>'published'") != "0",
+                       "durable unpublished outbox during broker outage")
+            check(self.status(run["run_id"])["status"] != "succeeded", "broker outage cannot manufacture success")
+        finally:
+            container.unpause()
+        self.terminal(run["run_id"], timeout=90)
+        eventually(lambda: self.sql("SELECT count(*) FROM octopus_core.dq_outbox "
+                                    f"WHERE payload->>'run_id'='{run['run_id']}' AND status<>'published'") == "0",
+                   "durable outbox drained after broker recovery")
+        self.scenarios.append("broker_pause_durable_outbox_and_recovery")
 
     def result(self):
         dispatch = self.query_json("SELECT coalesce(json_agg(ms), '[]') FROM (SELECT extract(epoch FROM "
@@ -489,7 +540,8 @@ class Stack:
         check(dispatch, "actual eligible-receipt to worker-start dispatch samples required")
         return {"status": "passed", "scenarios": self.scenarios, "manager_replicas": 2, "worker_replicas": 2,
                 "implementation_digest": self.implementation, "canonical_manifests": {name: value["manifest_sha256"] for name, value in self.manifests.items()},
-                "admission": {"samples": len(self.admission_ms), "p99_ms": p99(self.admission_ms)},
+                "admission": {"samples": len(self.admission_ms), "p99_ms": p99(self.admission_ms),
+                              "sequential_requests_per_second": round(self.args.samples / self.sample_admission_seconds, 3)},
                 "dispatch_receipt_to_worker_started": {"samples": len(dispatch), "p99_ms": p99(dispatch)},
                 "streamed_artifacts": self.streaming, "performance_target_certified": False,
                 "limitations": ["Local synthetic acceptance is not sustained 1000 requests per second certification.",

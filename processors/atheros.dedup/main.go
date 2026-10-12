@@ -7,9 +7,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/internal/dedup"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/contract"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/schemas"
+	"github.com/zlovtnik/ssl-proxy/services/dq/internal/dedup"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/contract"
+	"github.com/zlovtnik/ssl-proxy/services/dq/schemas"
 	"os"
 	"strings"
 )
@@ -46,7 +46,7 @@ func run() error {
 	flag.StringVar(&o.installation, "installation", "", "authorized installation")
 	flag.StringVar(&o.namespace, "namespace", "", "authorized namespace")
 	flag.StringVar(&o.digest, "implementation-digest", "", "reviewed OCI sha256 digest (required)")
-	flag.StringVar(&o.workerService, "worker-service", "delip-queve-worker:9091", "approved deployment service")
+	flag.StringVar(&o.workerService, "worker-service", "ssl-proxy-dq-atheros-dedup-v0-1-0:9091", "approved deployment service")
 	flag.StringVar(&o.policyVersion, "policy-version", "", "approved policy version (required)")
 	flag.IntVar(&o.concurrency, "concurrency", 4, "warm worker slots")
 	flag.StringVar(&o.remoteURL, "remote-url", "", "approved immutable UI URL")

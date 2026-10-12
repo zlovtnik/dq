@@ -435,8 +435,11 @@ function RunDetails(props: {
   navigate: (path: string) => void;
 }) {
   const [manifest] = createResource(
-    () => [props.run().processor_id, props.run().processor_version] as const,
-    ([id, version]) => load(() => api.manifest(id, version)),
+    () => JSON.stringify([props.run().processor_id, props.run().processor_version]),
+    (key) => {
+      const [id, version] = JSON.parse(key) as [string, string];
+      return load(() => api.manifest(id, version));
+    },
   );
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal("");
@@ -657,10 +660,10 @@ function RunPage(props: { id: string; navigate: (path: string) => void }) {
         <p role="status">Loading run status...</p>
       </Show>
       <ErrorNotice message={run()?.error} retry={() => void refetch()} />
-      <Show when={current()?.run_id} keyed>
-        {() => (
+      <Show when={current()}>
+        {(value) => (
           <RunDetails
-            run={current}
+            run={value}
             refresh={() => void refetch()}
             navigate={props.navigate}
           />

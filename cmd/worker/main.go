@@ -12,16 +12,15 @@ import (
 	"errors"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
-	"github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/sasl/scram"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/internal/artifact"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/internal/dedup"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/internal/worker"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/broker"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/contract"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/rpc"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/telemetry"
+	"github.com/zlovtnik/ssl-proxy/services/dq/internal/artifact"
+	"github.com/zlovtnik/ssl-proxy/services/dq/internal/dedup"
+	"github.com/zlovtnik/ssl-proxy/services/dq/internal/worker"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/broker"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/contract"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/rpc"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/telemetry"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -64,26 +63,17 @@ func manifest() (contract.Manifest, error) {
 	if err != nil || len(data) > contract.MaxRecordBytes {
 		return m, errors.New("bounded manifest unavailable")
 	}
+	data, err = contract.CanonicalJSON(data)
+	if err != nil {
+		return m, errors.New("invalid worker manifest")
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err = decoder.Decode(&m); err != nil {
 		return m, errors.New("invalid worker manifest")
 	}
-	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
-	if err != nil {
-		return m, err
-	}
-	obj, ok := doc.(map[string]any)
-	if !ok {
-		return m, errors.New("manifest object required")
-	}
-	delete(obj, "manifest_sha256")
-	canonical, err := json.Marshal(obj)
-	if err != nil {
-		return m, err
-	}
-	canonical, err = contract.CanonicalJSON(canonical)
-	if err != nil || contract.SHA256(canonical) != m.ManifestSHA256 {
+	digest, err := contract.ManifestDigest(m)
+	if err != nil || digest != m.ManifestSHA256 {
 		return m, errors.New("manifest checksum mismatch")
 	}
 	if m.ProcessorID != dedup.ProcessorID || m.Version != dedup.Version || m.ImplementationDigest != os.Getenv("DQ_WORKER_IMPLEMENTATION_DIGEST") || !strings.HasPrefix(m.ImplementationDigest, "sha256:") || !contract.ValidSHA256(strings.TrimPrefix(m.ImplementationDigest, "sha256:")) {
@@ -119,7 +109,7 @@ func authorized(token string) grpc.UnaryServerInterceptor {
 func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	shutdownTracing, err := telemetry.Init(ctx, "delip-queve-worker")
+	shutdownTracing, err := telemetry.Init(ctx, "dq-worker")
 	if err != nil {
 		return errors.New("tracing configuration invalid")
 	}
@@ -176,6 +166,15 @@ func run() error {
 			versioning, err := client.GetBucketVersioning(checkCtx, binding.Bucket)
 			if err != nil || !versioning.Enabled() {
 				return errors.New("versioned MinIO bindings required")
+			}
+			encryption, err := client.GetBucketEncryption(checkCtx, binding.Bucket)
+			if err != nil || encryption == nil || len(encryption.Rules) == 0 {
+				return errors.New("encrypted MinIO bindings required")
+			}
+			for _, rule := range encryption.Rules {
+				if rule.Apply.SSEAlgorithm != "AES256" && rule.Apply.SSEAlgorithm != "aws:kms" {
+					return errors.New("encrypted MinIO bindings required")
+				}
 			}
 		}
 	}

@@ -12,9 +12,10 @@ import (
 	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/contract"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/sdk"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/telemetry"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/contract"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/sdk"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/telemetry"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -26,12 +27,13 @@ type Config struct {
 	ReportTimeout  time.Duration
 }
 type execution struct {
-	request     contract.RunRequest
-	fingerprint string
-	status      string
-	cancel      context.CancelFunc
-	deadline    time.Time
-	done        bool
+	request         contract.RunRequest
+	fingerprint     string
+	status          string
+	cancel          context.CancelFunc
+	deadline        time.Time
+	done            bool
+	cancelRequested bool
 }
 type Worker struct {
 	cfg              Config
@@ -54,7 +56,7 @@ type denyLoader struct{}
 func (denyLoader) Load(string) (any, error) { return nil, errors.New("external schema forbidden") }
 func New(cfg Config, processor sdk.Processor, resources sdk.ResourceFactory, reporter sdk.Reporter) (*Worker, error) {
 	m := cfg.Manifest
-	if processor == nil || resources == nil || reporter == nil || m.ProcessorID == "" || m.Version == "" || m.ImplementationDigest == "" || m.ProtocolVersion != contract.ProtocolVersion || m.Resources.Concurrency < 1 || m.Resources.Concurrency > 1024 || m.Resources.TimeoutSeconds < 1 || m.Resources.TimeoutSeconds > 3600 {
+	if processor == nil || resources == nil || reporter == nil || m.ProcessorID == "" || m.Version == "" || m.ImplementationDigest == "" || m.ProtocolVersion != contract.ProtocolVersion || m.Resources.Concurrency < 1 || m.Resources.Concurrency > 128 || m.Resources.TimeoutSeconds < 1 || m.Resources.TimeoutSeconds > 3600 {
 		return nil, errors.New("invalid worker prerequisites")
 	}
 	if cfg.CacheEntries <= 0 {
@@ -122,7 +124,7 @@ func (w *Worker) Health(_ context.Context) (contract.HealthResponse, error) {
 	}
 	return contract.HealthResponse{InitResponse: w.initResponse(), Ready: !w.closed && !time.Now().Before(w.unavailableUntil), AvailableSlots: slots}, nil
 }
-func (w *Worker) Run(_ context.Context, req contract.RunRequest) (contract.RunResponse, error) {
+func (w *Worker) Run(callCtx context.Context, req contract.RunRequest) (contract.RunResponse, error) {
 	m := w.cfg.Manifest
 	now := time.Now()
 	if req.InstallationID != m.InstallationID || req.Namespace != m.Namespace || req.WorkerInstanceID != w.identity || req.ProcessorID != m.ProcessorID || req.ProcessorVersion != m.Version || req.ImplementationDigest != m.ImplementationDigest || req.PolicyVersion != m.PolicyVersion {
@@ -131,7 +133,16 @@ func (w *Worker) Run(_ context.Context, req contract.RunRequest) (contract.RunRe
 	if !contract.ValidSegment(req.RunID) || !contract.ValidSegment(req.AttemptID) || req.Fence < 1 || req.WorkerSlot < 0 || req.WorkerSlot >= len(w.slots) || !req.DeadlineAt.After(now) || !req.LeaseExpiresAt.After(now) || !contract.ValidSHA256(req.SourceRevisionDigest) || !json.Valid(req.Parameters) {
 		return contract.RunResponse{}, status.Error(codes.InvalidArgument, "invalid attempt reservation")
 	}
-	encoded, err := json.Marshal(req)
+	canonical, err := contract.CanonicalJSON(req.Parameters)
+	if err != nil || len(req.Traceparent) > 128 || len(req.Tracestate) > 512 {
+		return contract.RunResponse{}, status.Error(codes.InvalidArgument, "invalid attempt document")
+	}
+	req.Parameters = canonical
+	// A retried dispatch has a new transport span. Trace context does not
+	// change the immutable work identity or cause a second execution.
+	identity := req
+	identity.Traceparent, identity.Tracestate = "", ""
+	encoded, err := json.Marshal(identity)
 	if err != nil || len(encoded) > contract.MaxRecordBytes {
 		return contract.RunResponse{}, status.Error(codes.InvalidArgument, "invalid attempt size")
 	}
@@ -177,8 +188,12 @@ func (w *Worker) Run(_ context.Context, req contract.RunRequest) (contract.RunRe
 	if req.DeadlineAt.Before(deadline) {
 		deadline = req.DeadlineAt
 	}
-	ctx, cancel := context.WithDeadline(w.ctx, deadline)
-	entry := &execution{request: req, fingerprint: fingerprint, status: "running", cancel: cancel, deadline: deadline}
+	parent := telemetry.Extract(w.ctx, req.Traceparent, req.Tracestate)
+	if remote := trace.SpanContextFromContext(callCtx); remote.IsValid() {
+		parent = trace.ContextWithSpanContext(w.ctx, remote)
+	}
+	ctx, cancel := context.WithDeadline(parent, deadline)
+	entry := &execution{request: req, fingerprint: fingerprint, status: "running", cancel: cancel, deadline: req.DeadlineAt}
 	w.attempts[req.AttemptID] = entry
 	w.slots[req.WorkerSlot] = req.AttemptID
 	w.wait.Add(1)
@@ -197,22 +212,25 @@ func (w *Worker) execute(ctx context.Context, entry *execution, resources sdk.Ar
 	defer w.wait.Done()
 	defer entry.cancel()
 	req := entry.request
-	ctx, span := telemetry.Start(telemetry.Extract(ctx, req.Traceparent, req.Tracestate), "worker.run")
+	ctx, span := telemetry.Start(ctx, "worker.run")
 	defer span.End()
 	req.Traceparent, req.Tracestate = telemetry.Fields(ctx)
-	started := w.envelope(req, "started", 0)
+	var sequenceMu sync.Mutex
+	var lastProgressSequence int64
+	reportSequence := int64(1)
+	reportsClosed := false
+	started := w.envelope(req, "started", reportSequence)
 	err := w.report(started)
 	var output contract.OutputManifest
 	if err == nil {
-		var sequenceMu sync.Mutex
-		var lastSequence int64
 		output, err = w.processor.Run(ctx, req, sdk.RunContext{Artifacts: resources, Progress: func(ctx context.Context, sequence int64, metadata []byte) error {
 			sequenceMu.Lock()
 			defer sequenceMu.Unlock()
-			if sequence <= lastSequence || len(metadata) > 4096 || !json.Valid(metadata) {
+			if reportsClosed || sequence <= lastProgressSequence || len(metadata) > 4096 || !json.Valid(metadata) {
 				return sdk.Permanent("progress_invalid")
 			}
-			progress := w.envelope(req, "progress", sequence)
+			reportSequence++
+			progress := w.envelope(req, "progress", reportSequence)
 			progress.Summary = append([]byte(nil), metadata...)
 			if _, err := contract.EncodeEnvelope(progress); err != nil {
 				return err
@@ -220,10 +238,15 @@ func (w *Worker) execute(ctx context.Context, entry *execution, resources sdk.Ar
 			if err := w.reporter.Report(ctx, progress); err != nil {
 				return err
 			}
-			lastSequence = sequence
+			lastProgressSequence = sequence
 			return nil
 		}})
 	}
+	sequenceMu.Lock()
+	reportsClosed = true
+	reportSequence++
+	terminalSequence := reportSequence
+	sequenceMu.Unlock()
 	state := "output_ready"
 	if err == nil {
 		if ctx.Err() != nil {
@@ -241,7 +264,7 @@ func (w *Worker) execute(ctx context.Context, entry *execution, resources sdk.Ar
 		}
 	}
 	if err == nil {
-		event := w.envelope(req, "output_ready", 0)
+		event := w.envelope(req, "output_ready", terminalSequence)
 		event.Artifacts = output.OutputRefs
 		event.Summary = output.Summary
 		if _, err = contract.EncodeEnvelope(event); err == nil {
@@ -251,7 +274,7 @@ func (w *Worker) execute(ctx context.Context, entry *execution, resources sdk.Ar
 	if err != nil {
 		telemetry.Fail(span)
 		state = "failed"
-		event := w.envelope(req, "attempt_failed", 0)
+		event := w.envelope(req, "attempt_failed", terminalSequence+1)
 		event.ErrorClass = "transient"
 		event.ErrorCode = "dependency_unavailable"
 		var failure *sdk.Failure
@@ -260,9 +283,17 @@ func (w *Worker) execute(ctx context.Context, entry *execution, resources sdk.Ar
 			event.ErrorCode = failure.Code
 		}
 		if errors.Is(err, context.Canceled) {
-			state = "cancelled"
-			event.ErrorCode = "cancelled"
-			event.ErrorClass = "permanent"
+			w.mu.Lock()
+			cancelRequested := entry.cancelRequested
+			w.mu.Unlock()
+			if cancelRequested {
+				state = "cancelled"
+				event.ErrorCode = "cancelled"
+				event.ErrorClass = "permanent"
+			} else {
+				event.ErrorCode = "worker_interrupted"
+				event.ErrorClass = "transient"
+			}
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
 			event.ErrorCode = "attempt_deadline"
@@ -294,6 +325,7 @@ func (w *Worker) Cancel(_ context.Context, req contract.CancelRequest) (contract
 		return contract.CancelResponse{}, status.Error(codes.FailedPrecondition, "stale cancellation fence")
 	}
 	if !entry.done {
+		entry.cancelRequested = true
 		entry.cancel()
 		entry.status = "cancelling"
 	}

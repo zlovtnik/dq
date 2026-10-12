@@ -34,8 +34,9 @@ for the opaque sandbox origin; manager serving supplies it.
 - `VITE_DQ_ATHEROS_REVIEW_URL`: optional link to the existing Atheros review queue.
 
 These values contain no secrets. Enter the authorized bearer token at runtime.
-For development, serve the shell and manager through the same origin or configure
-the manager's allowed UI origin; never embed a bearer token in a build variable.
+The development server proxies `/v1` to the local manager on port 8080, keeping
+API calls on the shell origin. Leave `VITE_DQ_API_BASE_URL` empty for this setup.
+Never embed a bearer token in a build variable.
 
 ## Extension boundary and fallback
 

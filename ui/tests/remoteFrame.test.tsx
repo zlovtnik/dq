@@ -36,7 +36,8 @@ describe('extension fallback and host actions', () => {
     expect(parameters).not.toHaveBeenCalled();
     send(frame, 'set_parameters', { limit: 5 }, 'good-1');
     send(frame, 'set_parameters', { limit: 7 }, 'good-1');
-    expect(parameters).toHaveBeenCalledExactlyOnceWith({ limit: 5 });
+    expect(parameters).toHaveBeenCalledTimes(1);
+    expect(parameters).toHaveBeenCalledWith({ limit: 5 });
     expect(reply.mock.calls.at(-1)?.[0].payload).toEqual({ accepted: true, submitted: false });
     expect(JSON.stringify(reply.mock.calls)).not.toContain('Bearer');
   });

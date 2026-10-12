@@ -6,8 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/contract"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/rpc/pb"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/contract"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/rpc/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -30,8 +30,9 @@ func encode(value any) (*pb.Document, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > contract.MaxRecordBytes {
-		return nil, errors.New("lifecycle document exceeds 64 KiB")
+	data, err = contract.CanonicalJSON(data)
+	if err != nil {
+		return nil, errors.New("invalid bounded lifecycle document")
 	}
 	return &pb.Document{Json: data}, nil
 }
@@ -39,7 +40,11 @@ func decode(document *pb.Document, value any) error {
 	if document == nil || len(document.Json) > contract.MaxRecordBytes {
 		return errors.New("invalid lifecycle document size")
 	}
-	d := json.NewDecoder(bytes.NewReader(document.Json))
+	canonical, err := contract.CanonicalJSON(document.Json)
+	if err != nil {
+		return errors.New("invalid lifecycle JSON")
+	}
+	d := json.NewDecoder(bytes.NewReader(canonical))
 	d.DisallowUnknownFields()
 	if err := d.Decode(value); err != nil {
 		return err

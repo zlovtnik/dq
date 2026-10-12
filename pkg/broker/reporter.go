@@ -5,8 +5,8 @@ import (
 	"context"
 	"errors"
 	"github.com/twmb/franz-go/pkg/kgo"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/contract"
-	"github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/telemetry"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/contract"
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/telemetry"
 )
 
 const WorkerReportsTopic = "dq.worker-reports.v1"
