@@ -511,6 +511,8 @@ def main():
     directory = Path(tempfile.mkdtemp(prefix="dq-acceptance-"))
     stack = Stack(args, directory)
     started = time.monotonic()
+    result = {"status": "interrupted", "completed_scenarios": stack.scenarios,
+              "logs": str(directory), "performance_target_certified": False}
     try:
         stack.setup()
         stack.exercise()

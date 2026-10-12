@@ -114,7 +114,7 @@ func (m *Manager) Admit(ctx context.Context, req contract.AdmitRequest) (contrac
 			return run, err
 		}
 		req.Parameters = canonical
-		err := m.Control.Do(ctx, http.MethodPost, "/runs", nil, req, &run)
+		err = m.Control.Do(ctx, http.MethodPost, "/runs", nil, req, &run)
 		return run, err
 	}
 	var notFound *control.StatusError
@@ -398,15 +398,21 @@ func (m *Manager) startMonitor(ctx context.Context, r contract.Run, a contract.A
 				continue
 			}
 			if current.CurrentAttempt == nil || current.CurrentAttempt.AttemptID != a.AttemptID || current.CurrentAttempt.Fence != a.Fence || current.Status == "cancelled" || current.Status == "failed" || current.Status == "succeeded" {
-				_, _ = w.Client.Cancel(ctx, contract.CancelRequest{Scope: m.Scope, RunID: r.RunID, AttemptID: a.AttemptID, Fence: a.Fence})
+				callCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+				_, _ = w.Client.Cancel(callCtx, contract.CancelRequest{Scope: m.Scope, RunID: r.RunID, AttemptID: a.AttemptID, Fence: a.Fence})
+				cancel()
 				return
 			}
-			health, err := w.Client.Health(ctx)
+			healthCtx, cancelHealth := context.WithTimeout(ctx, 3*time.Second)
+			health, err := w.Client.Health(healthCtx)
+			cancelHealth()
 			if err != nil || health.WorkerInstanceID != a.WorkerInstanceID || !validHealth(w.Approved, health) {
 				return
 			}
 			if time.Now().After(r.DeadlineAt) {
-				_, _ = w.Client.Cancel(ctx, contract.CancelRequest{Scope: m.Scope, RunID: r.RunID, AttemptID: a.AttemptID, Fence: a.Fence})
+				callCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+				_, _ = w.Client.Cancel(callCtx, contract.CancelRequest{Scope: m.Scope, RunID: r.RunID, AttemptID: a.AttemptID, Fence: a.Fence})
+				cancel()
 				return
 			}
 			if time.Until(current.CurrentAttempt.LeaseExpiresAt) > 5*time.Second {
@@ -414,7 +420,9 @@ func (m *Manager) startMonitor(ctx context.Context, r contract.Run, a contract.A
 			}
 			body := contract.LeaseMutation{Scope: m.Scope, RunID: r.RunID, WorkerInstanceID: a.WorkerInstanceID, LeaseToken: a.LeaseToken, Fence: a.Fence}
 			if err := m.Control.Do(ctx, http.MethodPost, "/attempts/"+url.PathEscape(a.AttemptID)+"/renew", nil, body, nil); err != nil {
-				_, _ = w.Client.Cancel(ctx, contract.CancelRequest{Scope: m.Scope, RunID: r.RunID, AttemptID: a.AttemptID, Fence: a.Fence})
+				callCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+				_, _ = w.Client.Cancel(callCtx, contract.CancelRequest{Scope: m.Scope, RunID: r.RunID, AttemptID: a.AttemptID, Fence: a.Fence})
+				cancel()
 				return
 			}
 			m.Metrics.Renewals.Add(1)
