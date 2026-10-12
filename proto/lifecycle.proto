@@ -1,0 +1,15 @@
+syntax = "proto3";
+package dq.v1;
+option go_package = "github.com/zlovtnik/ssl-proxy/services/delip-queve/pkg/rpc/pb";
+
+// The JSON documents implement the versioned control contract. Both ends bound
+// the serialized document to 64 KiB and reject unknown fields. Artifacts are
+// references; artifact bytes never pass through this transport.
+message Document { bytes json = 1; }
+message Empty {}
+service Lifecycle {
+  rpc Init(Document) returns (Document);
+  rpc Run(Document) returns (Document);
+  rpc Cancel(Document) returns (Document);
+  rpc Health(Empty) returns (Document);
+}

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:dq:atheros.dedup.parameters.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["authorized_scope", "policy_version", "max_candidates"],
+  "properties": {
+    "authorized_scope": {"type": "string", "minLength": 1, "maxLength": 200},
+    "snapshot_revision": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "policy_version": {"type": "string", "minLength": 1, "maxLength": 200},
+    "max_candidates": {"type": "integer", "minimum": 1, "maximum": 1000},
+    "candidate_id": {"type": "string", "minLength": 1, "maxLength": 200}
+  }
+}
