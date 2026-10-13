@@ -4,8 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -136,5 +140,54 @@ func TestReceiptRetryClassification(t *testing.T) {
 		if got := retryable(test.err); got != test.want {
 			t.Fatalf("retryable(%v)=%v, want %v", test.err, got, test.want)
 		}
+	}
+}
+
+func TestMaximumSizedBrokerEnvelopeReceivesDurableHTTPReceiptBeforeCommit(t *testing.T) {
+	record := validRecord(t)
+	var envelope contract.Envelope
+	if err := json.Unmarshal(record.Value, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	envelope.Summary = json.RawMessage(`{"padding":""}`)
+	base, err := contract.EncodeEnvelope(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope.Summary = json.RawMessage(`{"padding":"` + strings.Repeat("a", contract.MaxRecordBytes-len(base)) + `"}`)
+	record.Value, err = contract.EncodeEnvelope(envelope)
+	if err != nil || len(record.Value) != contract.MaxRecordBytes {
+		t.Fatalf("maximum envelope fixture: %d bytes, %v", len(record.Value), err)
+	}
+	var durable atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/dq/v1/receipts" || r.Header.Get("Authorization") != "Bearer service-secret" {
+			t.Error("missing authenticated receipt route")
+		}
+		body, err := io.ReadAll(io.LimitReader(r.Body, control.MaxReceiptBytes+1))
+		if err != nil || len(body) <= control.MaxRecordBytes || len(body) > control.MaxReceiptBytes {
+			t.Errorf("receipt wrapper bounds: %d bytes, %v", len(body), err)
+		}
+		var receipt contract.Receipt
+		if json.Unmarshal(body, &receipt) != nil || receipt.Envelope == nil || receipt.PayloadSHA256 != contract.SHA256(record.Value) {
+			t.Error("wrapped receipt lost broker evidence")
+		}
+		durable.Store(true)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	consumer := Consumer{Control: control.New(server.URL, "service-secret"), Scope: contract.Scope{InstallationID: "test", Namespace: "ns"}, Group: "test-group"}
+	commits := 0
+	if err := consumer.ProcessRecord(context.Background(), record, func(context.Context) error {
+		if !durable.Load() {
+			t.Fatal("broker offset advanced before durable HTTP receipt")
+		}
+		commits++
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if commits != 1 {
+		t.Fatal("maximum sized record stalled the consumer")
 	}
 }

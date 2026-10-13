@@ -11,10 +11,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/contract"
 	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/telemetry"
 )
 
 const MaxRecordBytes = 65536
+const MaxReceiptBytes = MaxRecordBytes + 6144
+const MaxDispatchResponseBytes = 1024 * 1024
 
 var ErrUnavailable = errors.New("coordinator unavailable")
 var ErrResponse = errors.New("invalid coordinator response")
@@ -52,15 +55,28 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 	defer span.End()
 	var data []byte
 	var err error
-	if body != nil {
-		data, err = json.Marshal(body)
-		if err != nil || len(data) > MaxRecordBytes {
-			return errors.New("control record exceeds limit")
-		}
-	}
 	path, err = escapePath(path)
 	if err != nil {
 		return errors.New("invalid coordinator path")
+	}
+	if body != nil {
+		data, err = json.Marshal(body)
+		limit := MaxRecordBytes
+		if method == http.MethodPost && path == "/receipts" {
+			limit = MaxReceiptBytes
+			var receipt contract.Receipt
+			if err != nil || json.Unmarshal(data, &receipt) != nil {
+				return errors.New("invalid receipt document")
+			}
+			if receipt.Envelope != nil {
+				if _, err := contract.EncodeEnvelope(*receipt.Envelope); err != nil {
+					return errors.New("invalid receipt envelope")
+				}
+			}
+		}
+		if err != nil || len(data) > limit {
+			return errors.New("control record exceeds limit")
+		}
 	}
 	endpoint := c.BaseURL + path
 	if len(query) > 0 {
@@ -93,12 +109,20 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, MaxRecordBytes))
 		return &StatusError{Status: resp.StatusCode}
 	}
+	responseLimit := MaxRecordBytes
+	if method == http.MethodGet && path == "/dispatches" {
+		responseLimit = MaxDispatchResponseBytes
+	}
 	if out == nil {
-		_, err = io.Copy(io.Discard, io.LimitReader(resp.Body, MaxRecordBytes+1))
+		var size int64
+		size, err = io.Copy(io.Discard, io.LimitReader(resp.Body, int64(responseLimit+1)))
+		if size > int64(responseLimit) {
+			return ErrResponse
+		}
 		return err
 	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, MaxRecordBytes+1))
-	if err != nil || len(b) > MaxRecordBytes {
+	b, err := io.ReadAll(io.LimitReader(resp.Body, int64(responseLimit+1)))
+	if err != nil || len(b) > responseLimit {
 		return ErrResponse
 	}
 	if err := json.Unmarshal(b, out); err != nil {

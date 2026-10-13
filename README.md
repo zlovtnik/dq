@@ -18,6 +18,7 @@ PostgreSQL clients or database credentials.
 - `ui`: SolidJS shell and independently built processor remote.
 - [Wire contract](contracts/README.md): endpoints, messages and lifecycle.
 - [Local acceptance](tests/acceptance.md): isolated full-stack checks and measurements.
+- [Verification report](tests/verification.md): completed checks, measurements and promotion gates.
 - [Container build](Dockerfile): separate manager and worker build targets.
 - [Kubernetes base](../../cyber-stack/base/delip-queve): unpromoted workloads.
 
@@ -80,11 +81,25 @@ Run metadata and request identities retain 90 days; referenced artifacts retain
 through open review/replay and for 90 days after closure. Uncommitted outputs
 need a safety window and reference check before removal.
 
-Octopus collects exact expired object versions hourly and prunes metadata after
-object deletion. Orphan versions wait seven days and must pass a durable
+Octopus drains expired object versions in bounded batches every five minutes
+and prunes metadata after object deletion. Hourly orphan scans wait seven days
+and require a durable
 reference check. Pending review evidence stays retained; decision-discovery
 tombstones remain after run metadata expires. Its object credentials therefore
 need version listing and deletion rights within the installation's artifact prefix.
+
+The v1 coordinator prepares and applies `atheros.dedup` only; registration
+rejects unsupported processor domains. Its manager, SDK and worker lifecycle
+are generic, while a new projection-owning processor also needs an Octopus
+snapshot/application adapter. Parameter schemas use the bounded vocabulary
+described in the [wire contract](contracts/README.md).
+
+Manager metrics include dispatch latency buckets and scoped broker observations.
+Octopus samples queue age, retrying and applying runs, eligible application age,
+minute admission/completion counts, expired fences, pending outbox/DLQ work and
+expired artifact backlog. Kafka lag is observed per assigned partition, and
+sample timestamps expose stale observations. Use the existing broker metrics
+for retained topic depth; an outbox backlog is distinct from broker lag.
 
 The [DQ configuration placeholders](../../cyber-stack/base/delip-queve/configmaps.yaml)
 must be replaced by approved worker manifests and configured identities before
@@ -101,6 +116,11 @@ uploads, malformed records, scoped access, remote fallback and rollback.
 Required stack checks include Atheros quality/fixtures/UI and mandatory database
 contracts, Octopus tests, canonical schema validation, desired-state validation
 and `python3 scripts/check-docs.py`.
+
+Admission has a global queue cap and an equal reserved quota per configured
+scope, preventing one scope from taking all available capacity. Repeated
+idempotent requests recover their original run even when the admission quota
+is full. Worker report and command offsets advance only after durable receipts.
 
 Measure admission, dispatch, preparation, queue wait, computation, application
 and artifact throughput separately. The design targets (1000 runs/sec sustained,

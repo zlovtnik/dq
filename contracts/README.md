@@ -31,6 +31,11 @@ their JSON body. Authorization and beta policy are checked by Octopus.
 - `GET /artifacts/{artifact_id}`: authorized artifact metadata.
 - `POST /artifacts/{artifact_id}/access`: audited short-lived access.
 
+Internal receipt wrappers allow 71680 bytes so they can carry a complete
+65536-byte broker envelope plus ingestion evidence. Internal dispatch pages
+are bounded to 1 MiB and at most 100 items. These batch budgets do not increase
+the broker record limit or permit inline artifact contents.
+
 ## Shared data
 
 `ArtifactRef`: artifact_id, installation_id, namespace, uri, version_id, etag,

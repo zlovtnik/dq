@@ -65,7 +65,7 @@ func Load() (Config, error) {
 		return c, err
 	}
 	c.DispatchLimit, err = strconv.Atoi(env("DQ_DISPATCH_LIMIT", "32"))
-	if err != nil || c.DispatchLimit < 1 || c.DispatchLimit > 128 {
+	if err != nil || c.DispatchLimit < 1 || c.DispatchLimit > 100 {
 		return c, errors.New("invalid dispatch limit")
 	}
 	c.PollInterval, err = time.ParseDuration(env("DQ_POLL_INTERVAL", "1s"))

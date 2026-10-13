@@ -8,6 +8,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/zlovtnik/ssl-proxy/services/dq/pkg/contract"
 )
 
 func TestScopedActorAndSanitizedErrors(t *testing.T) {
@@ -77,5 +80,73 @@ func TestEscapePathKeepsIDsWithinOneRouteSegment(t *testing.T) {
 		if _, err := escapePath(path); err == nil {
 			t.Errorf("unsafe path accepted: %q", path)
 		}
+	}
+}
+
+func TestReceiptAllowanceDoesNotIncreaseEnvelopeOrOtherRequestLimits(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	client := New(server.URL, "service-secret")
+	envelope := contract.Envelope{SchemaVersion: 1, EventID: "event", EventType: "invoke", InstallationID: "i", Namespace: "n", RunID: "run", OccurredAt: time.Now().UTC(), Artifacts: []contract.ArtifactRef{}, Summary: json.RawMessage(`{"padding":"` + strings.Repeat("a", MaxRecordBytes) + `"}`)}
+	receipt := contract.Receipt{Envelope: &envelope}
+	if client.Do(context.Background(), http.MethodPost, "/receipts", nil, receipt, nil) == nil {
+		t.Fatal("receipt allowance admitted an oversized enclosed envelope")
+	}
+	receipt.Envelope = nil
+	receipt.QuarantineReason = strings.Repeat("a", MaxRecordBytes)
+	if client.Do(context.Background(), http.MethodPost, "/runs", nil, receipt, nil) == nil {
+		t.Fatal("ordinary control request inherited receipt allowance")
+	}
+	receipt.QuarantineReason = strings.Repeat("a", MaxReceiptBytes)
+	if client.Do(context.Background(), http.MethodPost, "/receipts", nil, receipt, nil) == nil {
+		t.Fatal("receipt metadata exceeded its bounded allowance")
+	}
+	if calls != 0 {
+		t.Fatal("invalid bodies reached the coordinator")
+	}
+}
+
+func TestDispatchBatchResponseHasSeparateBoundedHTTPBudget(t *testing.T) {
+	scope := contract.Scope{InstallationID: "test", Namespace: "ns"}
+	parameters := json.RawMessage(`{"scope":"floor-a"}`)
+	schema := json.RawMessage(`{"type":"object","description":"` + strings.Repeat("a", 1400) + `","properties":{"scope":{"type":"string"}}}`)
+	manifest := contract.Manifest{InstallationID: scope.InstallationID, Namespace: scope.Namespace, ProcessorID: "atheros.dedup", Version: "0.1.0", OwnerTeam: "atheros", ImplementationDigest: "sha256:" + strings.Repeat("a", 64), WorkerService: "worker-v1", ProtocolVersion: contract.ProtocolVersion, ParameterSchema: schema, ParameterSchemaSHA256: contract.SHA256(schema), Resources: contract.ResourceLimits{TimeoutSeconds: 45, Concurrency: 4, MaxInputBytes: 32 << 20, MaxOutputBytes: 1 << 20}}
+	ref := contract.ArtifactRef{ArtifactID: "source", InstallationID: scope.InstallationID, Namespace: scope.Namespace, URI: "s3://dq-artifacts/test/ns/runs/run/source.json", VersionID: "version-1", ETag: "etag", SHA256: strings.Repeat("b", 64), SchemaID: "dq.atheros.dedup.snapshot.v1", MediaType: "application/json", SizeBytes: 10, ProducerRunID: "run"}
+	batch := struct {
+		Items []contract.Dispatch `json:"items"`
+	}{}
+	for range 32 {
+		batch.Items = append(batch.Items, contract.Dispatch{Run: contract.Run{InstallationID: scope.InstallationID, Namespace: scope.Namespace, RunID: "run", ProcessorID: manifest.ProcessorID, ProcessorVersion: manifest.Version, ImplementationDigest: manifest.ImplementationDigest, Parameters: parameters, ParametersSHA256: contract.SHA256(parameters), InputRefs: []contract.ArtifactRef{ref}, OutputRefs: []contract.ArtifactRef{}, SourceRevisionDigest: strings.Repeat("c", 64), DeadlineAt: time.Now().Add(time.Minute)}, Manifest: manifest})
+	}
+	data, err := json.Marshal(batch)
+	if err != nil || len(data) <= MaxRecordBytes || len(data) > MaxDispatchResponseBytes {
+		t.Fatalf("realistic dispatch batch fixture: %d bytes, %v", len(data), err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("oversized") != "" {
+			_, _ = w.Write([]byte(strings.Repeat("a", MaxDispatchResponseBytes+1)))
+			return
+		}
+		_, _ = w.Write(data)
+	}))
+	defer server.Close()
+	client := New(server.URL, "service-secret")
+	var received struct {
+		Items []contract.Dispatch `json:"items"`
+	}
+	if err := client.Do(context.Background(), http.MethodGet, "/dispatches", Query("test", "ns"), nil, &received); err != nil || len(received.Items) != 32 || len(received.Items[0].Run.InputRefs) != 1 {
+		t.Fatalf("default dispatch batch failed: %d items, %v", len(received.Items), err)
+	}
+	if !errors.Is(client.Do(context.Background(), http.MethodGet, "/processors", nil, nil, &received), ErrResponse) {
+		t.Fatal("ordinary response inherited dispatch allowance")
+	}
+	query := Query("test", "ns")
+	query.Set("oversized", "true")
+	if !errors.Is(client.Do(context.Background(), http.MethodGet, "/dispatches", query, nil, &received), ErrResponse) {
+		t.Fatal("unbounded dispatch response accepted")
 	}
 }

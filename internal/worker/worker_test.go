@@ -72,6 +72,15 @@ type reports struct {
 
 type boundedReporter struct{}
 
+type outputOutageReporter struct{}
+
+func (outputOutageReporter) Report(_ context.Context, event contract.Envelope) error {
+	if event.EventType == "started" {
+		return nil
+	}
+	return errors.New("report channel unavailable")
+}
+
 type progressProcessor struct {
 	base *blocking
 	fail bool
@@ -270,6 +279,36 @@ func TestCacheNeverEvictsActiveOrUnexpired(t *testing.T) {
 	next.AttemptID = "next"
 	if _, err := w.Run(context.Background(), next); status.Code(err) != codes.ResourceExhausted {
 		t.Fatalf("unexpired reservation evicted: %v", err)
+	}
+}
+
+func TestLostAcknowledgementAfterExecutionTimeoutRetainsAttempt(t *testing.T) {
+	w, processor, _ := newFixture(t, 8)
+	w.reporter = outputOutageReporter{}
+	close(processor.release)
+	now := time.Now()
+	req := request(w)
+	req.DeadlineAt = now.Add(time.Minute)
+	req.LeaseExpiresAt = now.Add(time.Minute)
+	if _, err := w.run(context.Background(), req, now); err != nil {
+		t.Fatal(err)
+	}
+	waitDone(t, w, req, "failed")
+	// An unrelated dispatch must not evict the completed attempt when its
+	// 45-second compute timeout has elapsed but its run deadline is still live.
+	later := now.Add(46 * time.Second)
+	next := req
+	next.RunID, next.AttemptID = "next", "next"
+	if _, err := w.run(context.Background(), next, later); err != nil {
+		t.Fatal(err)
+	}
+	waitDone(t, w, next, "failed")
+	response, err := w.run(context.Background(), req, later)
+	if err != nil || response.Status != "failed" {
+		t.Fatalf("lost acknowledgement retry: %+v %v", response, err)
+	}
+	if processor.calls.Load() != 2 {
+		t.Fatalf("completed attempt executed again: %d calls", processor.calls.Load())
 	}
 }
 func TestDependencyFailureReleasesCredit(t *testing.T) {
