@@ -1,4 +1,5 @@
 import { accessToken, scope } from "./session";
+import { embedded, embeddedAPI } from './embeddedBridge';
 import type { ArtifactRef, Manifest, Run } from "./types";
 const apiBase = (import.meta.env.VITE_DQ_API_BASE_URL || "").replace(/\/$/, "");
 const maxBytes = 65536;
@@ -19,6 +20,7 @@ async function request<T>(
   body?: unknown,
   signal?: AbortSignal,
 ): Promise<T> {
+  if (embedded) return embeddedAPI<T>(path,method,body,signal);
   if (!accessToken())
     throw new ApiError(401, "Sign in to inspect this installation.");
   const controller = new AbortController();

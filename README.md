@@ -60,6 +60,16 @@ and a bounded timeout. The existing merge decision endpoint keeps its contract.
 The Atheros UI's `VITE_DQ_BETA_ENABLED` controls visibility; it grants no backend
 permission.
 
+Atheros also hosts the independently built shell at `/dq-ui/embedded.html`.
+The manager image packages this entry and its assets under `ui/dist/embedded`;
+`make ui-check` builds both entries and preserves the processor remote bundle.
+Embedded runtime settings arrive through the version 1 Atheros host bridge.
+There is no connection form, standalone header or sign-out control in embedded
+mode. The parent owns authentication and navigation; the shell receives approved
+metadata and operations without bearer credentials. Processor extensions still
+use their separate approved origin and `sandbox="allow-scripts"`.
+See the [Atheros workspace contract](../../apps/integration-console/atheros-search/README.md#embedded-dq-workspace).
+
 ## Deployment and beta gates
 
 Desired state is under [cyber-stack](../../cyber-stack/README.md). The DQ base

@@ -1,5 +1,6 @@
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { approvedRemoteOrigin } from "./session";
+import { embedded } from './embeddedBridge';
 import { checkParameters } from "./schema";
 import {
   hostAPIVersion,
@@ -45,7 +46,7 @@ export function RemoteFrame(props: {
     const channel = crypto.randomUUID();
     const seen = new Set<string>();
     url.searchParams.set("channel", channel);
-    url.searchParams.set("host_origin", window.location.origin);
+    url.searchParams.set("host_origin", embedded ? 'null' : window.location.origin);
     setSrc(url.toString());
     const timer = window.setTimeout(() => {
       setFailed("The processor extension timed out. Use the generic view.");

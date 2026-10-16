@@ -9,6 +9,7 @@ import {
   Switch,
 } from "solid-js";
 import { api } from "./api";
+import { embedded, embeddedPath, hostRequest } from './embeddedBridge';
 import {
   accessToken,
   betaEnabled,
@@ -337,9 +338,9 @@ function InvocationForm(props: {
               }}
             >
               <option value="prepare_candidates">Prepare candidates</option>
-              <option value="reconcile_decision">
+              <Show when={!embedded}><option value="reconcile_decision">
                 Reconcile recorded decision
-              </option>
+              </option></Show>
             </select>
           </Show>
         </label>
@@ -356,7 +357,7 @@ function InvocationForm(props: {
             unchanged.
           </p>
         </Show>
-        <button type="submit" class="primary" disabled={busy() || disabled()}>
+        <button type={embedded ? 'button' : 'submit'} class="primary" disabled={busy() || disabled()} onClick={() => { if (embedded && !disabled()) setReviewing(true); }}>
           Review invocation
         </button>
       </form>
@@ -638,7 +639,7 @@ function RunPage(props: { id: string; navigate: (path: string) => void }) {
   };
   createEffect(() => {
     const value = current();
-    if (!value || terminal(value.status) || run()?.error) return;
+    if (!value || run()?.error || terminal(value.status) && !(value.status === 'succeeded' && value.operation === 'prepare_candidates' && !value.projection_applied)) return;
     const timer = window.setTimeout(() => void refetch(), 3000);
     onCleanup(() => window.clearTimeout(timer));
   });
@@ -777,9 +778,9 @@ function ArtifactDetails(props: {
       </div>
       <Show when={download()}>
         <p class="notice">
-          <a href={download()} target="_blank" rel="noreferrer noopener">
+          <Show when={!embedded} fallback={<span>Use the authorized artifact link in Atheros to download.</span>}><a href={download()} target="_blank" rel="noreferrer noopener">
             Download authorized artifact
-          </a>
+          </a></Show>
           <Show when={expires()}>
             <span> / expires {expires()}</span>
           </Show>
@@ -899,7 +900,7 @@ function DedupPage(props: { navigate: (path: string) => void }) {
             onInput={(event) => setRunID(event.currentTarget.value)}
           />
         </label>
-        <button type="submit">Inspect run</button>
+        <button type={embedded ? 'button' : 'submit'} onClick={() => { if (embedded && runID().trim()) props.navigate(`/dq/runs/${encodeURIComponent(runID().trim())}`); }}>Inspect run</button>
       </form>
       <Show when={reviewURL}>
         <p>
@@ -918,11 +919,12 @@ function DedupPage(props: { navigate: (path: string) => void }) {
 
 export default function App() {
   const [path, setPath] = createSignal(window.location.pathname);
-  const route = () => parseRoute(path());
+  const route = () => parseRoute(embedded ? embeddedPath() : path());
   const popstate = () => setPath(window.location.pathname);
   window.addEventListener("popstate", popstate);
   onCleanup(() => window.removeEventListener("popstate", popstate));
   function navigate(next: string) {
+    if (embedded) { void hostRequest('navigate',{path:next}).catch(()=>undefined); return; }
     window.history.pushState({}, "", next);
     setPath(next);
     document.getElementById("main-content")?.focus();
@@ -941,7 +943,7 @@ export default function App() {
       <a class="skip-link" href="#main-content">
         Skip to content
       </a>
-      <header class="topbar">
+      <Show when={!embedded}><header class="topbar">
         <a
           href="/dq/processors"
           class="brand"
@@ -961,9 +963,10 @@ export default function App() {
         <Show when={accessToken()}>
           <button onClick={signOut}>Sign out</button>
         </Show>
-      </header>
+      </header></Show>
       <div class="workspace">
         <nav aria-label="Primary navigation">
+          <Show when={embedded}><button onClick={()=>navigate('/dq')}>Review candidates</button></Show>
           <a
             href="/dq/processors"
             aria-current={route().kind === "processors" ? "page" : undefined}
@@ -993,7 +996,7 @@ export default function App() {
           </p>
         </nav>
         <main id="main-content" tabIndex={-1}>
-          <Show when={accessToken()} fallback={<SessionForm />}>
+          <Show when={embedded || accessToken()} fallback={<SessionForm />}>
             <Switch>
               <Match when={route().kind === "processors"}>
                 <Catalog navigate={navigate} />
