@@ -23,10 +23,14 @@ function receive(event:MessageEvent) {
 if (embedded) window.addEventListener('message',receive);
 export function disposeBridge() {
   window.removeEventListener('message',receive);
+  window.removeEventListener('pagehide',pageHide);
   for (const request of pending.values()) { request.cleanup(); request.reject(new Error('Workspace closed.')); }
   pending.clear();
 }
-if (embedded) window.addEventListener('pagehide',disposeBridge,{once:true});
+function pageHide(event:PageTransitionEvent) {
+  if (!event.persisted) disposeBridge();
+}
+if (embedded) window.addEventListener('pagehide',pageHide);
 export function hostRequest<T>(operation:string,payload:Record<string,unknown>={},signal?:AbortSignal):Promise<T> {
   if (!embedded || window.parent===window || !/^[a-zA-Z0-9-]{1,200}$/.test(channel) || !bounded(payload) || signal?.aborted || pending.size>=32) return Promise.reject(new Error('Invalid host request.'));
   return new Promise<T>((resolve,reject)=>{

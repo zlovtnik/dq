@@ -29,9 +29,12 @@ func TestMinIOExactVersionEncryptedStreaming(t *testing.T) {
 		image = "minio/minio:RELEASE.2025-09-07T16-13-09Z"
 	}
 	args := []string{"run", "-d", "--rm", "-p", "127.0.0.1::9000", "-e", "MINIO_ROOT_USER=dqtestuser", "-e", "MINIO_ROOT_PASSWORD=dqtestpassword", "-e", "MINIO_KMS_SECRET_KEY=dq-test:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=", image, "server", "/data"}
-	containerOutput, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
+	command := exec.CommandContext(ctx, "docker", args...)
+	var startupErrors bytes.Buffer
+	command.Stderr = &startupErrors
+	containerOutput, err := command.Output()
 	if err != nil {
-		t.Fatalf("mandatory MinIO test container: %v %s", err, containerOutput)
+		t.Fatalf("mandatory MinIO test container: %v %s %s", err, containerOutput, startupErrors.String())
 	}
 	container := strings.TrimSpace(string(containerOutput))
 	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", container).Run() })

@@ -808,6 +808,7 @@ def main():
     check(1 <= args.load_window_seconds <= 60, "load arrival window must be 1..60 seconds")
     directory = Path(tempfile.mkdtemp(prefix="dq-acceptance-"))
     stack = Stack(args, directory)
+    completed_scenarios = []
     started = time.monotonic()
     result = {"status": "interrupted", "completed_scenarios": stack.scenarios,
               "logs": str(directory), "performance_target_certified": False}
@@ -823,15 +824,18 @@ def main():
             stack.close()
             load_directory = directory / "load"
             load_directory.mkdir()
-            stack = Stack(args, load_directory)
+            load_stack = Stack(args, load_directory)
+            completed_scenarios = stack.scenarios
+            stack = load_stack
             stack.setup()
             stack.admission_load()
             result["bounded_admission_load"] = stack.load_results
             result["load_environment"] = "separate freshly provisioned two-manager/two-worker stack"
             result["limitations"].append("Load outbox backlog is reported after public cancellation; draining that backlog within a production recovery budget is not certified.")
+        result["scenarios"] = completed_scenarios + stack.scenarios
     except Exception as error:
         stack.failure_logs()
-        result = {"status": "failed", "error": str(error), "completed_scenarios": stack.scenarios,
+        result = {"status": "failed", "error": str(error), "completed_scenarios": completed_scenarios + stack.scenarios,
                   "logs": str(directory), "bounded_admission_load": stack.load_results,
                   "performance_target_certified": False}
         raise
