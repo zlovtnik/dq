@@ -29,11 +29,14 @@ func TestMinIOExactVersionEncryptedStreaming(t *testing.T) {
 		image = "minio/minio:RELEASE.2025-09-07T16-13-09Z"
 	}
 	args := []string{"run", "-d", "--rm", "-p", "127.0.0.1::9000", "-e", "MINIO_ROOT_USER=dqtestuser", "-e", "MINIO_ROOT_PASSWORD=dqtestpassword", "-e", "MINIO_KMS_SECRET_KEY=dq-test:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=", image, "server", "/data"}
-	output, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
+	command := exec.CommandContext(ctx, "docker", args...)
+	var startupErrors bytes.Buffer
+	command.Stderr = &startupErrors
+	containerOutput, err := command.Output()
 	if err != nil {
-		t.Fatalf("mandatory MinIO test container: %v %s", err, output)
+		t.Fatalf("mandatory MinIO test container: %v %s %s", err, containerOutput, startupErrors.String())
 	}
-	container := strings.TrimSpace(string(output))
+	container := strings.TrimSpace(string(containerOutput))
 	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", container).Run() })
 	port, err := exec.CommandContext(ctx, "docker", "port", container, "9000/tcp").Output()
 	if err != nil {
@@ -137,5 +140,34 @@ func TestMinIOExactVersionEncryptedStreaming(t *testing.T) {
 	if headers.Metadata.Get("X-Amz-Server-Side-Encryption") != "AES256" {
 		t.Fatalf("output was not encrypted: %v", headers.Metadata)
 	}
+	abortedAccess, err := factory.ForAttempt(contract.RunRequest{Scope: contract.Scope{InstallationID: "i", Namespace: "n"}, RunID: "run-aborted", AttemptID: "attempt-aborted", InputRefs: []contract.ArtifactRef{ref}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	aborted, err := abortedAccess.CreateOutput(ctx, "proposal", "application/json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = io.Copy(aborted, bytes.NewReader(stream)); err != nil {
+		t.Fatal(err)
+	}
+	if err = aborted.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = aborted.Commit(ctx); err == nil {
+		t.Fatal("aborted multipart output published a reference")
+	}
+	select {
+	case <-aborted.(*output).result:
+	case <-time.After(10 * time.Second):
+		t.Fatal("aborted multipart upload did not stop")
+	}
+	for object := range client.ListObjects(ctx, bucket, minio.ListObjectsOptions{Prefix: "i/n/runs/run-aborted/", Recursive: true, WithVersions: true}) {
+		if object.Err != nil {
+			t.Fatal(object.Err)
+		}
+		t.Fatal("aborted multipart output left a committed object version")
+	}
 	t.Log(fmt.Sprintf("exact encrypted versioned input and %d-byte bounded multipart output verified", len(stream)))
+	t.Log("aborted multipart stream publishes neither an artifact reference nor an object version")
 }

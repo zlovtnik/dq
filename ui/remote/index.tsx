@@ -25,7 +25,7 @@ function request(operation: string, payload: unknown) {
       operation,
       payload,
     },
-    hostOrigin,
+    hostOrigin === 'null' ? '*' : hostOrigin,
   );
   window.setTimeout(() => {
     if (pending.delete(requestID)) {
@@ -84,7 +84,7 @@ const root = document.getElementById("remote-root");
 if (
   root &&
   /^[a-f0-9-]{36}$/.test(channel) &&
-  /^https?:\/\//.test(hostOrigin) &&
+  (hostOrigin === 'null' || /^https?:\/\//.test(hostOrigin)) &&
   window.parent !== window
 ) {
   render(

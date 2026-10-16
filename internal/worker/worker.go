@@ -125,8 +125,11 @@ func (w *Worker) Health(_ context.Context) (contract.HealthResponse, error) {
 	return contract.HealthResponse{InitResponse: w.initResponse(), Ready: !w.closed && !time.Now().Before(w.unavailableUntil), AvailableSlots: slots}, nil
 }
 func (w *Worker) Run(callCtx context.Context, req contract.RunRequest) (contract.RunResponse, error) {
+	return w.run(callCtx, req, time.Now())
+}
+
+func (w *Worker) run(callCtx context.Context, req contract.RunRequest, now time.Time) (contract.RunResponse, error) {
 	m := w.cfg.Manifest
-	now := time.Now()
 	if req.InstallationID != m.InstallationID || req.Namespace != m.Namespace || req.WorkerInstanceID != w.identity || req.ProcessorID != m.ProcessorID || req.ProcessorVersion != m.Version || req.ImplementationDigest != m.ImplementationDigest || req.PolicyVersion != m.PolicyVersion {
 		return contract.RunResponse{}, status.Error(codes.FailedPrecondition, "reservation deployment mismatch")
 	}

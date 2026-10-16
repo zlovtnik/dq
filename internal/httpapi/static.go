@@ -25,10 +25,19 @@ func Shell(directory, remoteOrigin string) http.Handler {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src "+frameSource(remoteOrigin)+"; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+		ancestors := "'none'"
+		embedded := strings.HasPrefix(r.URL.Path, "/dq-ui/")
+		if embedded {
+			ancestors = "'self'"
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		}
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src "+frameSource(remoteOrigin)+"; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors "+ancestors)
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		clean := path.Clean("/" + r.URL.Path)
+		if embedded {
+			clean = "/embedded/" + strings.TrimPrefix(clean, "/dq-ui/")
+		}
 		if clean == "/" || strings.HasPrefix(clean, "/dq/") || clean == "/dq" {
 			clean = "/index.html"
 		}

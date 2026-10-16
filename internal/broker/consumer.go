@@ -39,6 +39,7 @@ type Consumer struct {
 	Scope   contract.Scope
 	Group   string
 	Metrics *manager.Metrics
+	lag     *consumerLag
 }
 
 func (c *Consumer) ProcessRecord(ctx context.Context, record Record, commit func(context.Context) error) error {
@@ -53,6 +54,11 @@ func New(c config.Config, api control.API, metrics *manager.Metrics) (*Consumer,
 		return nil, errors.New("Redpanda endpoints required")
 	}
 	opts := []kgo.Opt{kgo.SeedBrokers(c.Brokers...), kgo.ConsumerGroup(c.ConsumerGroup), kgo.ConsumeTopics(CommandTopic), kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()), kgo.DisableAutoCommit(), kgo.BlockRebalanceOnPoll(), kgo.FetchMaxPartitionBytes(contract.MaxRecordBytes), kgo.FetchMaxBytes(1024 * 1024), kgo.RebalanceTimeout(5 * time.Minute)}
+	lag := &consumerLag{metrics: metrics, partitions: map[int32]partitionLag{}}
+	clearLag := func(_ context.Context, _ *kgo.Client, partitions map[string][]int32) {
+		lag.revoke(partitions[CommandTopic])
+	}
+	opts = append(opts, kgo.OnPartitionsRevoked(clearLag), kgo.OnPartitionsLost(clearLag))
 	if c.BrokerTLS {
 		tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
 		if c.BrokerCA != "" {
@@ -75,7 +81,7 @@ func New(c config.Config, api control.API, metrics *manager.Metrics) (*Consumer,
 	if err != nil {
 		return nil, errors.New("invalid Redpanda configuration")
 	}
-	return &Consumer{Client: client, Control: api, Scope: contract.Scope{InstallationID: c.InstallationID, Namespace: c.Namespace}, Group: c.ConsumerGroup, Metrics: metrics}, nil
+	return &Consumer{Client: client, Control: api, Scope: contract.Scope{InstallationID: c.InstallationID, Namespace: c.Namespace}, Group: c.ConsumerGroup, Metrics: metrics, lag: lag}, nil
 }
 
 // Receipt never commits offsets itself. The caller may advance an offset only
@@ -181,6 +187,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 			}
 			continue
 		}
+		c.lag.observe(fetches, c.Client.CommittedOffsets())
 		for _, record := range fetches.Records() {
 			delay := time.Second
 			for {
@@ -213,6 +220,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 				c.Client.AllowRebalance()
 				return errors.New("broker offset commit unavailable")
 			}
+			c.lag.commit(record.Partition, record.Offset+1)
 		}
 		c.Client.AllowRebalance()
 	}

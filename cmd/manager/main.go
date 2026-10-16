@@ -70,7 +70,8 @@ func run(logger *slog.Logger) error {
 	})
 	public.HandleFunc("GET /metrics", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-		_, _ = fmt.Fprintf(w, "dq_dispatch_total %d\ndq_dispatch_errors_total %d\ndq_dispatch_duration_seconds_sum %.9f\ndq_dispatch_duration_seconds_count %d\ndq_receipts_total %d\ndq_quarantines_total %d\ndq_lease_renewals_total %d\ndq_poll_errors_total %d\n", m.Metrics.Dispatches.Load(), m.Metrics.DispatchErrors.Load(), float64(m.Metrics.DispatchNanoseconds.Load())/float64(time.Second), m.Metrics.Dispatches.Load(), m.Metrics.Receipts.Load(), m.Metrics.Quarantines.Load(), m.Metrics.Renewals.Load(), m.Metrics.PollErrors.Load())
+		_ = m.Metrics.WritePrometheus(w)
+		_, _ = fmt.Fprintf(w, "# TYPE dq_consumer_buffered_records gauge\ndq_consumer_buffered_records %d\n# TYPE dq_consumer_buffered_bytes gauge\ndq_consumer_buffered_bytes %d\n", consumer.Client.BufferedFetchRecords(), consumer.Client.BufferedFetchBytes())
 	})
 	public.Handle("/", httpapi.Shell(cfg.UIPath, cfg.RemoteOrigin))
 	server := newServer(cfg.HTTPAddr, public)

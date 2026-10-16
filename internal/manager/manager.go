@@ -31,11 +31,15 @@ type Worker struct {
 type Metrics struct {
 	Dispatches          atomic.Uint64
 	DispatchErrors      atomic.Uint64
-	DispatchNanoseconds atomic.Uint64
 	Receipts            atomic.Uint64
 	Quarantines         atomic.Uint64
 	Renewals            atomic.Uint64
 	PollErrors          atomic.Uint64
+	ConsumerLagRecords  atomic.Int64
+	ConsumerLagObserved atomic.Int64
+	dispatchMu          sync.Mutex
+	dispatchBuckets     [len(dispatchDurationBuckets)]uint64
+	dispatchNanoseconds uint64
 }
 type Manager struct {
 	Control      control.API
@@ -248,6 +252,7 @@ func matches(w config.Worker, m contract.Manifest) bool {
 }
 
 func (m *Manager) dispatch(ctx context.Context, item contract.Dispatch) error {
+	started := time.Now()
 	r := item.Run
 	ctx = telemetry.Extract(ctx, r.Traceparent, r.Tracestate)
 	ctx, span := telemetry.Start(ctx, "dq.dispatch")
@@ -336,7 +341,6 @@ func (m *Manager) dispatch(ctx context.Context, item contract.Dispatch) error {
 	if a.AttemptID == "" || a.RunID != r.RunID || a.Fence < 1 || a.LeaseToken == "" || a.LeaseExpiresAt.Before(time.Now()) || a.WorkerSlot < 0 {
 		return errors.New("invalid reservation")
 	}
-	started := time.Now()
 	callCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	traceparent, tracestate := telemetry.Fields(ctx)
@@ -351,8 +355,7 @@ func (m *Manager) dispatch(ctx context.Context, item contract.Dispatch) error {
 	if err := m.Control.Do(ctx, http.MethodPost, "/attempts/"+url.PathEscape(a.AttemptID)+"/accepted", nil, lease, nil); err != nil {
 		return err
 	}
-	m.Metrics.Dispatches.Add(1)
-	m.Metrics.DispatchNanoseconds.Add(uint64(time.Since(started)))
+	m.Metrics.ObserveDispatch(time.Since(started))
 	m.startMonitor(ctx, r, a, selected)
 	return nil
 }
