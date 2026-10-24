@@ -7,10 +7,25 @@ Checksums use sorted compact UTF-8 JSON with exact, exponent-free decimal number
 no insignificant fractional zeros, and zero normalized to `0`. This remains
 stable across PostgreSQL JSONB round trips.
 
+## Contract sources
+
+- [Go control types](../pkg/contract/types.go) and
+  [canonical JSON](../pkg/contract/canonical.go) define shared records.
+- [Lifecycle protobuf](../proto/lifecycle.proto) defines worker RPC transport.
+- [Processor schemas](../schemas) define dedup parameters, snapshots, and proposals.
+- [Manager HTTP routes](../internal/httpapi/api.go) expose the public subset.
+- [Octopus routes](../../octopus/src/main/scala/com/sslproxy/coordinator/http/DqRoutes.scala)
+  implement the durable control API.
+
 ## Control API
 
-Internal routes start at `/internal/dq/v1`. Public manager routes start at
-`/v1`. Every internal request requires service authentication. Reads use
+Internal routes start at `/internal/dq/v1`. The list below describes that
+internal API. Public manager routes start at `/v1` and expose only processors,
+processor versions, run admission/status/cancel/replay, and artifact metadata/access.
+Invocation recovery, receipts, worker heartbeats, dispatches, reservations,
+acceptance, and lease renewal are internal operations. Every internal request
+requires service authentication; the manager separately enforces scoped roles
+on its public routes. Reads use
 `installation_id` and `namespace` query parameters; mutations carry them in
 their JSON body. Authorization and beta policy are checked by Octopus.
 

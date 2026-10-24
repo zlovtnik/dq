@@ -20,7 +20,7 @@ PostgreSQL clients or database credentials.
 - [Local acceptance](tests/acceptance.md): isolated full-stack checks and measurements.
 - [Verification report](tests/verification.md): completed checks, measurements and promotion gates.
 - [Container build](Dockerfile): separate manager and worker build targets.
-- [Kubernetes base](../../cyber-stack/base/delip-queve): unpromoted workloads.
+- [Kubernetes base](../../cyber-stack/base/delip-queve): manager and worker resources.
 
 The manager resolves manifests through Octopus and dispatches reserved attempts
 over persistent gRPC connections. It records broker receipts before offset
@@ -36,10 +36,25 @@ broker records. A successful run is separate from a human review decision.
 
 ## Local development
 
-Use Go, Bun, JDK 21 and sbt. Docker is required for the repository's ephemeral
+Use the complete [ssl-proxy workspace](../../README.md). Go 1.26 (as declared
+in [go.mod](go.mod)) and Bun build DQ; JDK 21 and sbt are also required for
+Octopus acceptance checks. Docker is required for the repository's ephemeral
 PostgreSQL database checks. Production credentials must not be used for local
 tests. Build the binaries with `make build`; verify Go with `make check`, UI
 with `make ui-check`, and local benchmarks with `make benchmark`.
+
+Run these commands from `services/dq`; install the locked UI dependencies first:
+
+```sh
+(cd ui && bun install --frozen-lockfile)
+make check
+make build
+make ui-check
+```
+
+The build writes `/tmp/dq-manager` and `/tmp/dq-worker`. These checks do not
+start a complete platform. Follow [local acceptance](tests/acceptance.md) for
+the isolated PostgreSQL, Redpanda, MinIO, and Octopus harness.
 
 The manager requires scoped identities, an authenticated Octopus control URL,
 approved worker addresses and broker access. Configure these with `DQ_*`
@@ -72,11 +87,14 @@ See the [Atheros workspace contract](../../apps/integration-console/atheros-sear
 
 ## Deployment and beta gates
 
-Desired state is under [cyber-stack](../../cyber-stack/README.md). The DQ base
-is deliberately excluded from environment slices until built images have real
-approved registry digests and the prerequisites below are provisioned. Add the
-promoted manager and worker to `app-stack` in a reviewed Git change; reconcile
-through Argo CD. Do not fabricate image digests or deploy interactively.
+Desired state is under [cyber-stack](../../cyber-stack/README.md). The production
+app-stack includes digest-pinned manager and worker images and a pinned processor
+manifest. Its [preparation patch](../../cyber-stack/matrix/prod/patches/dq-preparation.yaml)
+keeps both Deployments at zero replicas, and coordinator DQ admission remains
+disabled. Staging does not include the DQ base. This prepares platform inputs;
+it does not establish beta activation or successful live acceptance. Activate
+only through reviewed Git changes after the prerequisites below are verified;
+Argo CD reconciles the result.
 
 Provision scoped control identities, worker mutual TLS certificates, broker
 credentials and topic ACLs, and separate object-prefix permissions. Enable
@@ -111,10 +129,11 @@ expired artifact backlog. Kafka lag is observed per assigned partition, and
 sample timestamps expose stale observations. Use the existing broker metrics
 for retained topic depth; an outbox backlog is distinct from broker lag.
 
-The [DQ configuration placeholders](../../cyber-stack/base/delip-queve/configmaps.yaml)
-must be replaced by approved worker manifests and configured identities before
-activation. `DQ_CONTROL_ALLOW_PLAINTEXT` defaults to false; the current Octopus
-internal HTTP endpoint needs an explicit trusted-network setting or a configured
+The [base DQ configuration](../../cyber-stack/base/delip-queve/configmaps.yaml)
+contains placeholders; production supplies its approved worker manifest through
+the app-stack generator. Scoped runtime identities and environment configuration
+must also be provisioned before activation. `DQ_CONTROL_ALLOW_PLAINTEXT`
+defaults to false; the current Octopus internal HTTP endpoint needs an explicit trusted-network setting or a configured
 TLS endpoint. The schema executor image must include the canonical DQ additions
 before the new Octopus runtime checksum is promoted. Shell and remote origins,
 artifact browser access and object-store CORS also need environment configuration.

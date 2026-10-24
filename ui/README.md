@@ -8,6 +8,8 @@ Loading and errors reflect manager responses; no successful runs are simulated.
 
 ## Development and checks
 
+Run from `services/dq/ui` in the complete ssl-proxy workspace:
+
 ```sh
 bun install --frozen-lockfile
 bun run test
@@ -37,6 +39,20 @@ These values contain no secrets. Enter the authorized bearer token at runtime.
 The development server proxies `/v1` to the local manager on port 8080, keeping
 API calls on the shell origin. Leave `VITE_DQ_API_BASE_URL` empty for this setup.
 Never embed a bearer token in a build variable.
+
+## Embedded Atheros workspace
+
+The production build also creates `dist/embedded/embedded.html` with the
+`/dq-ui/` asset base. Atheros serves this entry at `/dq-ui/embedded.html` and
+owns login, navigation, and authorization. The embedded shell requests approved
+operations through the version 1 same-origin host bridge rather than receiving
+bearer credentials or showing a connection form. Bridge requests are bounded to
+64 KiB, limited to 32 pending calls, and time out after 12 seconds.
+
+The embedded entry needs its Atheros parent and channel handshake; opening it
+directly does not create a standalone authenticated session. Processor remotes
+retain the separate sandbox boundary described below. See the
+[Atheros embedded workspace contract](../../../apps/integration-console/atheros-search/README.md#embedded-dq-workspace).
 
 ## Extension boundary and fallback
 
